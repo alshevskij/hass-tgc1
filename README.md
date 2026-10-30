@@ -1,4 +1,3 @@
-<img width="1142" height="840" alt="tgc" src="https://github.com/user-attachments/assets/f64bc4ee-fd86-47a1-9bf2-e27f43698f56" />
 # Личный кабинет ПАО «ТГК-1» в твоём Home Assistant!
 
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://github.com/hacs/integration)
