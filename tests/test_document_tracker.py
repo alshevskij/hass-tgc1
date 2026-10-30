@@ -18,6 +18,7 @@ from custom_components.tgc1.document_tracker import (  # noqa: E402
     async_load_seen_ids,
     async_save_seen_ids,
     find_new_documents,
+    process_document,
     restore_seen_ids,
     serialize_seen_ids,
 )
@@ -106,6 +107,59 @@ class ReceiptHistoryTests(unittest.IsolatedAsyncioTestCase):
         store = MemoryStore()
         self.assertTrue(await async_save_seen_ids(store, set()))
         self.assertEqual(store.data, {"initialized": True, "ids": []})
+
+
+    def test_document_is_marked_seen_only_after_both_actions_succeed(self):
+        seen_ids = set()
+        calls = []
+
+        process_document(
+            501,
+            seen_ids,
+            lambda: calls.append("notification"),
+            lambda: calls.append("event"),
+        )
+
+        self.assertEqual(calls, ["notification", "event"])
+        self.assertEqual(seen_ids, {"501"})
+
+    def test_notification_failure_does_not_mark_document_seen_or_fire_event(self):
+        seen_ids = set()
+        calls = []
+
+        def fail_notification():
+            calls.append("notification")
+            raise OSError("notification unavailable")
+
+        with self.assertRaises(OSError):
+            process_document(
+                502,
+                seen_ids,
+                fail_notification,
+                lambda: calls.append("event"),
+            )
+
+        self.assertEqual(calls, ["notification"])
+        self.assertEqual(seen_ids, set())
+
+    def test_event_failure_does_not_mark_document_seen(self):
+        seen_ids = set()
+        calls = []
+
+        def fail_event():
+            calls.append("event")
+            raise OSError("event unavailable")
+
+        with self.assertRaises(OSError):
+            process_document(
+                503,
+                seen_ids,
+                lambda: calls.append("notification"),
+                fail_event,
+            )
+
+        self.assertEqual(calls, ["notification", "event"])
+        self.assertEqual(seen_ids, set())
 
 
 if __name__ == "__main__":
