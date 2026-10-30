@@ -20,8 +20,8 @@ jobs:
         with:
           python-version: "3.13"
 
-      - name: Install Ruff
-        run: pip install ruff
+      - name: Install validation dependencies
+        run: pip install ruff aiohttp
 
       - name: Lint
         run: ruff check custom_components/tgc1
