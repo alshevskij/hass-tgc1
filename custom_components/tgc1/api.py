@@ -10,11 +10,11 @@ import aiohttp
 from .const import (
     CREATE_READING_URL,
     DEVICE_URL,
+    DOCUMENTS_URL,
+    DOCUMENT_FILE_URL,
     LOGIN_URL,
     REQUEST_HEADERS,
     SALDO_URL,
-    DOCUMENTS_URL,
-    DOCUMENT_FILE_URL,
 )
 
 TIMEOUT = aiohttp.ClientTimeout(total=30)
