@@ -51,6 +51,8 @@ async def async_load_seen_ids(store: Any, current_ids: set[str]) -> set[str]:
 async def async_save_seen_ids(store: Any, seen_ids: set[str]) -> bool:
     """Save bounded history without failing the coordinator refresh on storage errors."""
     bounded_ids = set(sorted(seen_ids)[-500:])
+    seen_ids.clear()
+    seen_ids.update(bounded_ids)
     try:
         await store.async_save(serialize_seen_ids(bounded_ids))
     except Exception:
@@ -59,6 +61,4 @@ async def async_save_seen_ids(store: Any, seen_ids: set[str]) -> bool:
             "уведомления могут повториться после перезапуска"
         )
         return False
-    seen_ids.clear()
-    seen_ids.update(bounded_ids)
     return True
