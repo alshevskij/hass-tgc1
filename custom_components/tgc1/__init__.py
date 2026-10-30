@@ -130,7 +130,7 @@ class Tgc1Coordinator(DataUpdateCoordinator[dict[str, Any]]):
                     message = (
                         "Появилась новая квитанция ТГК-1 за "
                         f"{newest.get('period', 'неизвестный период')}. "
-                        f"[Открыть PDF]({url})"
+                        f'<a href="{url}" target="_blank" rel="noopener noreferrer">Открыть PDF</a>'
                     )
                     persistent_notification.async_create(
                         self.hass,
