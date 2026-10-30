@@ -39,6 +39,7 @@ from .document_tracker import (
     async_load_seen_ids,
     async_save_seen_ids,
     find_new_documents,
+    process_document,
 )
 from .const import (
     DEFAULT_MAX_INCREASE,
@@ -141,23 +142,32 @@ class Tgc1Coordinator(DataUpdateCoordinator[dict[str, Any]]):
                     f"{document.get('period', 'неизвестный период')}. "
                     f'<a href="{url}" target="_blank" rel="noopener noreferrer">Открыть PDF</a>'
                 )
-                persistent_notification.async_create(
-                    self.hass,
-                    message,
-                    title="Новая квитанция ТГК-1",
-                    notification_id=f"tgc1_receipt_{self._entry_id}_{document_id}",
+                def create_notification() -> None:
+                    persistent_notification.async_create(
+                        self.hass,
+                        message,
+                        title="Новая квитанция ТГК-1",
+                        notification_id=f"tgc1_receipt_{self._entry_id}_{document_id}",
+                    )
+
+                def fire_event() -> None:
+                    self.hass.bus.async_fire(
+                        "tgc1_new_document",
+                        {
+                            "document_id": document_id,
+                            "name": document.get("name"),
+                            "period": document.get("period"),
+                            "date": document.get("date"),
+                            "url": url,
+                        },
+                    )
+
+                process_document(
+                    document_id,
+                    self._seen_document_ids,
+                    create_notification,
+                    fire_event,
                 )
-                self.hass.bus.async_fire(
-                    "tgc1_new_document",
-                    {
-                        "document_id": document_id,
-                        "name": document.get("name"),
-                        "period": document.get("period"),
-                        "date": document.get("date"),
-                        "url": url,
-                    },
-                )
-                self._seen_document_ids.add(str(document_id))
             except (TypeError, ValueError):
                 _LOGGER.warning("Пропускаю документ с некорректным ID: %s", document_id)
                 continue
