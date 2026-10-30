@@ -35,6 +35,7 @@ from homeassistant.helpers.typing import ConfigType
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import Tgc1ApiError, Tgc1AuthError, Tgc1Client, Tgc1RejectedError
+from .document_tracker import find_new_documents, restore_seen_ids, serialize_seen_ids
 from .const import (
     DEFAULT_MAX_INCREASE,
     DOMAIN,
@@ -123,24 +124,9 @@ class Tgc1Coordinator(DataUpdateCoordinator[dict[str, Any]]):
         current_ids = {str(document["id"]) for document in documents}
         if self._seen_document_ids is None:
             stored = await self._document_store.async_load()
-            if (
-                isinstance(stored, dict)
-                and isinstance(stored.get("ids"), list)
-                and (stored.get("initialized") is True or bool(stored["ids"]))
-            ):
-                # The non-empty IDs shape also supports data saved by older versions.
-                self._seen_document_ids = {str(item) for item in stored["ids"]}
-            else:
-                # First installation: establish a baseline and do not notify for old files.
-                # An explicit marker distinguishes an initialized empty history from no
-                # history at all, so an empty account stays quiet after every restart.
-                self._seen_document_ids = set(current_ids)
+            self._seen_document_ids = restore_seen_ids(stored, current_ids)
 
-        new_documents = [
-            document
-            for document in documents
-            if str(document["id"]) not in self._seen_document_ids
-        ]
+        new_documents = find_new_documents(documents, self._seen_document_ids)
         for document in sorted(new_documents, key=_document_sort_key):
             document_id = document["id"]
             try:
@@ -180,7 +166,7 @@ class Tgc1Coordinator(DataUpdateCoordinator[dict[str, Any]]):
         try:
             self._seen_document_ids = set(sorted(self._seen_document_ids)[-500:])
             await self._document_store.async_save(
-                {"initialized": True, "ids": sorted(self._seen_document_ids)}
+                serialize_seen_ids(self._seen_document_ids)
             )
         except OSError:
             _LOGGER.exception("Не удалось сохранить историю квитанций ТГК-1")
