@@ -1,0 +1,55 @@
+submit_reading:
+  name: Передать показания
+  description: Отправляет показания счётчика в личный кабинет ТГК-1
+  fields:
+    entity_id:
+      name: Сенсор показаний
+      description: Выбери сенсор «… показание» от интеграции ТГК-1
+      required: true
+      selector:
+        entity:
+          integration: tgc1
+          domain: sensor
+    value:
+      name: Новое показание
+      description: Значение, которое нужно передать
+      required: true
+      example: 197.5
+      selector:
+        number:
+          min: 0
+          max: 999999
+          step: any
+          mode: box
+    max_increase:
+      name: Максимальный прирост
+      description: Максимально допустимая разница с предыдущим показанием
+      required: false
+      default: 30
+      selector:
+        number:
+          min: 0
+          max: 1000
+          step: any
+          mode: box
+    dry_run:
+      name: Только проверить (dry run)
+      description: Если включено, показание не будет отправлено, только проверено
+      required: false
+      default: false
+      selector:
+        boolean:
+
+download_document:
+  name: Скачать квитанцию
+  description: Скачивает PDF квитанции ТГК-1 в папку /media/tgc1/
+  fields:
+    document_id:
+      name: ID документа
+      description: ID квитанции (можно найти в атрибутах сенсора «Последняя квитанция»)
+      required: true
+      example: 12345678
+      selector:
+        number:
+          min: 1
+          mode: box

@@ -1,0 +1,64 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "TGC-1 personal cabinet",
+        "description": "E-mail and password for lk.tgc1.ru",
+        "data": {
+          "username": "E-mail",
+          "password": "Password"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Password required",
+        "description": "TGC-1 rejected the stored password. Enter a new one.",
+        "data": {
+          "password": "Password"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Wrong e-mail or password",
+      "cannot_connect": "Cannot connect to lk.tgc1.ru",
+      "unknown": "Unknown error"
+    },
+    "abort": {
+      "already_configured": "This account is already added",
+      "reauth_successful": "Password updated"
+    }
+  },
+  "services": {
+    "submit_reading": {
+      "name": "Submit reading",
+      "description": "Sends a meter reading to the TGC-1 personal cabinet with safety checks: not lower than the previous one, jump limit, submissions open.",
+      "fields": {
+        "entity_id": {
+          "name": "Meter",
+          "description": "The \"… reading\" sensor of the meter."
+        },
+        "value": {
+          "name": "Reading",
+          "description": "Current meter reading (e.g. 197.5)."
+        },
+        "max_increase": {
+          "name": "Max increase",
+          "description": "Maximum allowed difference from the previous reading. Typo guard."
+        },
+        "dry_run": {
+          "name": "Dry run",
+          "description": "Validate the value without sending anything."
+        }
+      }
+    },
+    "download_document": {
+      "name": "Download receipt",
+      "description": "Downloads the latest TGC-1 receipt PDF to /media/tgc1/",
+      "fields": {
+        "document_id": {
+          "name": "Document ID",
+          "description": "ID of the receipt (see attributes of the Last receipt sensor)."
+        }
+      }
+    }
+  }
+}
