@@ -67,7 +67,8 @@ SUBMIT_READING_SCHEMA = vol.Schema(
 
 DOWNLOAD_DOCUMENT_SCHEMA = vol.Schema(
     {
-        vol.Required("document_id"): vol.Coerce(int),
+        vol.Required("document_id"): vol.All(vol.Coerce(int), vol.Range(min=1)),
+        vol.Optional("config_entry_id"): cv.string,
     }
 )
 
@@ -419,22 +420,40 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     # NEW: обработчик скачивания документа
     async def _handle_download_document(call: ServiceCall) -> ServiceResponse:
         document_id = call.data["document_id"]
-        # Ищем координатор в загруженных конфигурациях
+        requested_entry_id = call.data.get("config_entry_id")
+        matches = []
         for entry in hass.config_entries.async_entries(DOMAIN):
             if entry.state is not ConfigEntryState.LOADED:
                 continue
-            coordinator = entry.runtime_data
-            docs = coordinator.data.get("documents", [])
-            doc = next(
-                (d for d in docs if str(d.get("id")) == str(document_id)), None
-            )
-            if doc is None:
+            if requested_entry_id and entry.entry_id != requested_entry_id:
                 continue
-            path = await coordinator.async_download_document(
-                document_id, doc.get("name") or f"{document_id}.pdf"
+            coordinator = entry.runtime_data
+            doc = next(
+                (
+                    item
+                    for item in coordinator.data.get("documents", [])
+                    if str(item.get("id")) == str(document_id)
+                ),
+                None,
             )
-            return {"path": path}
-        raise ServiceValidationError(f"Документ {document_id} не найден в загруженных аккаунтах ТГК-1")
+            if doc is not None:
+                matches.append((coordinator, doc))
+
+        if not matches:
+            raise ServiceValidationError(
+                f"Документ {document_id} не найден в выбранной интеграции ТГК-1"
+            )
+        if len(matches) > 1:
+            raise ServiceValidationError(
+                "ID документа найден в нескольких аккаунтах. "
+                "Укажи config_entry_id, чтобы выбрать нужный аккаунт."
+            )
+
+        coordinator, doc = matches[0]
+        path = await coordinator.async_download_document(
+            document_id, doc.get("name") or f"{document_id}.pdf"
+        )
+        return {"path": path}
 
     hass.services.async_register(
         DOMAIN,
