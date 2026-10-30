@@ -15,7 +15,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import Tgc1ConfigEntry, Tgc1Coordinator
-from .entity import device_info as _device_info
+from .entity import device_info as _device_info, meter_display_name
 
 
 def _parse_date(value: Any) -> date | None:
@@ -66,7 +66,7 @@ class Tgc1MeterEntity(CoordinatorEntity[Tgc1Coordinator], SensorEntity):
         dev = coordinator.data["devices"][dev_id]
         service = dev.get("serviceName") or "Счётчик"
         self._attr_unique_id = f"{dev_id}_{key}"
-        self._attr_name = f"{service} {title}"
+        self._attr_name = meter_display_name(service, title)
         self._attr_device_info = _device_info(
             dev.get("abonentId"), dev.get("personalAccountNumber")
         )
@@ -86,7 +86,7 @@ class Tgc1ReadingSensor(Tgc1MeterEntity):
     _attr_state_class = SensorStateClass.TOTAL_INCREASING
 
     def __init__(self, coordinator: Tgc1Coordinator, dev_id: int) -> None:
-        super().__init__(coordinator, dev_id, "reading", "показание")
+        super().__init__(coordinator, dev_id, "reading", "текущие показания")
         service = str(self._dev.get("serviceName", "")).lower().replace("³", "3")
         if service.endswith("м3"):
             self._attr_native_unit_of_measurement = "m³"
@@ -112,7 +112,7 @@ class Tgc1LastReadingDateSensor(Tgc1MeterEntity):
     _attr_device_class = SensorDeviceClass.DATE
 
     def __init__(self, coordinator: Tgc1Coordinator, dev_id: int) -> None:
-        super().__init__(coordinator, dev_id, "last_reading_date", "дата последней передачи")
+        super().__init__(coordinator, dev_id, "last_reading_date", "дата последней передачи показаний")
 
     @property
     def native_value(self) -> date | None:
@@ -123,7 +123,7 @@ class Tgc1VerificationDateSensor(Tgc1MeterEntity):
     _attr_device_class = SensorDeviceClass.DATE
 
     def __init__(self, coordinator: Tgc1Coordinator, dev_id: int) -> None:
-        super().__init__(coordinator, dev_id, "next_verification", "следующая поверка")
+        super().__init__(coordinator, dev_id, "next_verification", "следующая поверка счётчика")
 
     @property
     def native_value(self) -> date | None:
