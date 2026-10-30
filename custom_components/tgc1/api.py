@@ -149,9 +149,14 @@ class Tgc1Client:
                     max_size = 25 * 1024 * 1024
                     if content_length is not None and content_length > max_size:
                         raise Tgc1ApiError("PDF exceeds the 25 MiB limit")
-                    content = await resp.content.read(max_size + 1)
-                    if len(content) > max_size:
-                        raise Tgc1ApiError("PDF exceeds the 25 MiB limit")
+                    chunks: list[bytes] = []
+                    total_size = 0
+                    async for chunk in resp.content.iter_chunked(64 * 1024):
+                        total_size += len(chunk)
+                        if total_size > max_size:
+                            raise Tgc1ApiError("PDF exceeds the 25 MiB limit")
+                        chunks.append(chunk)
+                    content = b"".join(chunks)
                     if not content.startswith(b"%PDF"):
                         raise Tgc1ApiError(
                             f"Unexpected document response (Content-Type: {content_type or 'unknown'})"
