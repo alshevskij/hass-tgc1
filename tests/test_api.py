@@ -41,6 +41,14 @@ class ApiResponseValidationTests(unittest.TestCase):
         with self.assertRaises(Tgc1ApiError):
             Tgc1Client._require_records([{"id": "meter-1"}], "devices")
 
+    def test_non_positive_id_is_rejected(self) -> None:
+        with self.assertRaises(Tgc1ApiError):
+            Tgc1Client._require_records([{"id": "0"}], "devices")
+
+    def test_float_id_is_rejected(self) -> None:
+        with self.assertRaises(Tgc1ApiError):
+            Tgc1Client._require_records([{"id": 12.5}], "devices")
+
 
 if __name__ == "__main__":
     unittest.main()
