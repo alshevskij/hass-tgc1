@@ -121,7 +121,10 @@ class Tgc1Coordinator(DataUpdateCoordinator[dict[str, Any]]):
         newest = _latest_document(documents)
         if newest is not None:
             newest_id = newest.get("id")
-            if self._last_document_id is not None and newest_id != self._last_document_id:
+            if self._last_document_id is None:
+                # Establish the initial baseline without notifying about old receipts.
+                self._last_document_id = newest_id
+            elif newest_id != self._last_document_id:
                 try:
                     url = self.async_document_url(newest_id)
                     message = (
@@ -147,7 +150,8 @@ class Tgc1Coordinator(DataUpdateCoordinator[dict[str, Any]]):
                     _LOGGER.exception(
                         "Не удалось создать уведомление о квитанции %s", newest_id
                     )
-            self._last_document_id = newest_id
+                else:
+                    self._last_document_id = newest_id
 
         return data
 
