@@ -80,20 +80,7 @@ data:
 
 Интеграция сама создаёт persistent notification с временной ссылкой на PDF. Дополнительно можно использовать событие `tgc1_new_document` в своих автоматизациях. Событие содержит `document_id`, `name`, `period`, `date` и подписанный URL в поле `url`. Ссылка действует 24 часа и перестаёт работать после перезапуска Home Assistant или удаления соответствующего токена авторизации.
 
-```yaml
-alias: "ТГК-1: Отправка квитанции в Telegram"
-triggers:
-  - trigger: event
-    event_type: tgc1_new_document
-actions:
-  - action: telegram_bot.send_document
-    data:
-      url: "{{ trigger.event.data.url }}"
-      caption: >-
-        Новая квитанция ТГК-1 за {{ trigger.event.data.period }}.
-        (Дата: {{ trigger.event.data.date }})
-    target: "ВАШ_CHAT_ID"
-```
+Автоматизации могут подписаться на событие `tgc1_new_document` и использовать `trigger.event.data.url` для собственных действий.
 
 ### Кнопка для быстрого доступа к квитанциям на дашборде
 
