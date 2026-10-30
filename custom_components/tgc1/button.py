@@ -4,16 +4,15 @@ from __future__ import annotations
 
 import logging
 
-from homeassistant.components.button import ButtonEntity
 from homeassistant.components import persistent_notification
-from homeassistant.core import HomeAssistant
+from homeassistant.components.button import ButtonEntity
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import Tgc1ConfigEntry, Tgc1Coordinator
 from .const import DEFAULT_MAX_INCREASE
 from .entity import Tgc1MeterBase, device_info as _device_info
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -62,7 +61,7 @@ class Tgc1SubmitButton(Tgc1MeterBase, ButtonEntity):
 
 
 class Tgc1DownloadReceiptButton(CoordinatorEntity[Tgc1Coordinator], ButtonEntity):
-    """Кнопка для скачивания последней квитанции."""
+    """Кнопка для открытия последней квитанции."""
 
     _attr_has_entity_name = True
     _attr_name = "Открыть последнюю квитанцию"
@@ -98,3 +97,4 @@ class Tgc1DownloadReceiptButton(CoordinatorEntity[Tgc1Coordinator], ButtonEntity
             title="Квитанция ТГК-1",
             notification_id=f"tgc1_receipt_{self.coordinator._entry_id}",
         )
+
