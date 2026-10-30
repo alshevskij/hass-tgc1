@@ -81,9 +81,11 @@ class ConcurrentRefreshSession:
         self.login_count = 0
         self.both_old_requests = asyncio.Event()
 
-    async def post(self, *_args, **_kwargs):
+    def post(self, *_args, **_kwargs):
         self.login_count += 1
-        return FakeResponse(200, {"accessToken": "token-new"})
+        return AsyncResponse(lambda: asyncio.sleep(
+            0, result=FakeResponse(200, {"accessToken": "token-new"})
+        ))
 
     def request(self, _method, _url, **kwargs):
         self.request_count += 1
