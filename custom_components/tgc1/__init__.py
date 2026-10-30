@@ -159,11 +159,11 @@ class Tgc1Coordinator(DataUpdateCoordinator[dict[str, Any]]):
                         "url": url,
                     },
                 )
+                self._seen_document_ids.add(str(document_id))
             except (TypeError, ValueError):
                 _LOGGER.warning("Пропускаю документ с некорректным ID: %s", document_id)
                 continue
 
-        self._seen_document_ids.update(current_ids)
         # Keep storage bounded while retaining enough history to avoid duplicate events.
         try:
             await self._document_store.async_save(
