@@ -304,12 +304,14 @@ class Tgc1Coordinator(DataUpdateCoordinator[dict[str, Any]]):
                     f"перед повторной попыткой: {err}"
                 ) from err
 
-            _LOGGER.info("tgc1 reading sent: %s", result)
+            _LOGGER.info("tgc1 reading accepted by the API: counter_id=%s", dev_id)
             await self.async_refresh()
-            after = self.data["devices"].get(dev_id, {})
+            refreshed = self.last_update_success
+            after = self.data["devices"].get(dev_id, {}) if refreshed else {}
             return {
                 **result,
                 "sent": True,
+                "refreshed": refreshed,
                 "reading_in_lk_now": after.get("lastReading"),
                 "date_in_lk_now": after.get("dtLastReading"),
             }
