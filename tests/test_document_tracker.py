@@ -15,6 +15,8 @@ package.__path__ = [
 sys.modules.setdefault("custom_components.tgc1", package)
 
 from custom_components.tgc1.document_tracker import (  # noqa: E402
+    async_load_seen_ids,
+    async_save_seen_ids,
     find_new_documents,
     restore_seen_ids,
     serialize_seen_ids,
@@ -68,6 +70,42 @@ class ReceiptHistoryTests(unittest.TestCase):
         self.assertEqual(len(stored["ids"]), 500)
         self.assertEqual(stored["ids"][0], "100")
         self.assertEqual(stored["ids"][-1], "599")
+
+
+    async def test_storage_load_failure_uses_current_documents_as_baseline(self):
+        class BrokenStore:
+            async def async_load(self):
+                raise OSError("storage unavailable")
+
+        with self.assertLogs("custom_components.tgc1.document_tracker", level="ERROR"):
+            restored = await async_load_seen_ids(BrokenStore(), {"401", "402"})
+
+        self.assertEqual(restored, {"401", "402"})
+
+    async def test_storage_save_failure_does_not_raise_and_keeps_bounded_memory(self):
+        class BrokenStore:
+            async def async_save(self, _data):
+                raise OSError("storage unavailable")
+
+        seen_ids = {str(item) for item in range(600)}
+        with self.assertLogs("custom_components.tgc1.document_tracker", level="ERROR"):
+            saved = await async_save_seen_ids(BrokenStore(), seen_ids)
+
+        self.assertFalse(saved)
+        self.assertEqual(len(seen_ids), 500)
+        self.assertEqual(min(seen_ids), "100")
+        self.assertEqual(max(seen_ids), "599")
+
+    async def test_storage_save_persists_initialized_empty_history(self):
+        class MemoryStore:
+            data = None
+
+            async def async_save(self, data):
+                self.data = data
+
+        store = MemoryStore()
+        self.assertTrue(await async_save_seen_ids(store, set()))
+        self.assertEqual(store.data, {"initialized": True, "ids": []})
 
 
 if __name__ == "__main__":
