@@ -30,15 +30,24 @@ async def async_setup_entry(
         Tgc1SubmitButton(coordinator, dev_id) for dev_id in known_devices
     )
 
-    # Receipt buttons are account-level and currently use the shared document feed.
-    if coordinator.data.get("accounts"):
-        acc_id = next(iter(coordinator.data["accounts"]))
+    # Receipt buttons use the shared document feed and are created once.
+    receipt_buttons_added = False
+
+    def add_receipt_buttons() -> None:
+        nonlocal receipt_buttons_added
+        accounts = coordinator.data.get("accounts", {})
+        if receipt_buttons_added or not accounts:
+            return
+        acc_id = next(iter(accounts))
         async_add_entities(
             (
                 Tgc1DownloadReceiptButton(coordinator, acc_id),
                 Tgc1SaveReceiptButton(coordinator, acc_id),
             )
         )
+        receipt_buttons_added = True
+
+    add_receipt_buttons()
 
     def handle_coordinator_update() -> None:
         new_devices = set(coordinator.data["devices"]) - known_devices
@@ -47,6 +56,7 @@ async def async_setup_entry(
             async_add_entities(
                 Tgc1SubmitButton(coordinator, dev_id) for dev_id in new_devices
             )
+        add_receipt_buttons()
 
     entry.async_on_unload(coordinator.async_add_listener(handle_coordinator_update))
 
