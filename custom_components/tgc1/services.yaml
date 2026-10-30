@@ -53,3 +53,9 @@ download_document:
         number:
           min: 1
           mode: box
+    config_entry_id:
+      name: ID записи интеграции
+      description: Необязательно. Укажи, если одинаковый ID документа найден в нескольких подключениях ТГК-1.
+      required: false
+      selector:
+        text:

@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 from datetime import date, datetime, timedelta
 import logging
-import os
 import re
 from pathlib import Path
 from typing import Any
@@ -30,11 +29,18 @@ from homeassistant.exceptions import (
     ServiceValidationError,
 )
 from homeassistant.helpers import config_validation as cv, entity_registry as er
+from homeassistant.helpers.storage import Store
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.typing import ConfigType
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import Tgc1ApiError, Tgc1AuthError, Tgc1Client, Tgc1RejectedError
+from .document_tracker import (
+    async_load_seen_ids,
+    async_save_seen_ids,
+    find_new_documents,
+    process_document,
+)
 from .const import (
     DEFAULT_MAX_INCREASE,
     DOMAIN,
@@ -65,10 +71,10 @@ SUBMIT_READING_SCHEMA = vol.Schema(
     }
 )
 
-# NEW: Схема для сервиса скачивания
 DOWNLOAD_DOCUMENT_SCHEMA = vol.Schema(
     {
-        vol.Required("document_id"): vol.Coerce(int),
+        vol.Required("document_id"): vol.All(vol.Coerce(int), vol.Range(min=1)),
+        vol.Optional("config_entry_id"): cv.string,
     }
 )
 
@@ -98,8 +104,10 @@ class Tgc1Coordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._submit_lock = asyncio.Lock()
         # reading typed in the number entity, per meter id
         self.pending_readings: dict[int, float | None] = {}
-        # NEW: храним ID последнего известного документа
-        self._last_document_id: int | None = None
+        self._document_store = Store(
+            hass, 1, f"{DOMAIN}_{entry.entry_id}_seen_documents"
+        )
+        self._seen_document_ids: set[str] | None = None
 
     async def _async_update_data(self) -> dict[str, Any]:
         try:
@@ -113,45 +121,64 @@ class Tgc1Coordinator(DataUpdateCoordinator[dict[str, Any]]):
             raise UpdateFailed(str(err)) from err
 
         data = {
-            "devices": {d["id"]: d for d in devices if "id" in d},
-            "accounts": {a["id"]: a for a in accounts if "id" in a},
-            "documents": documents,  # NEW: список документов
+            "devices": {d["id"]: d for d in devices},
+            "accounts": {a["id"]: a for a in accounts},
+            "documents": documents,
         }
 
-        newest = _latest_document(documents)
-        if newest is not None:
-            newest_id = newest.get("id")
-            if self._last_document_id is None:
-                # Establish the initial baseline without notifying about old receipts.
-                self._last_document_id = newest_id
-            elif newest_id != self._last_document_id:
-                try:
-                    url = self.async_document_url(newest_id)
-                    message = (
-                        "Появилась новая квитанция ТГК-1 за "
-                        f"{newest.get('period', 'неизвестный период')}. "
-                        f'<a href="{url}" target="_blank" rel="noopener noreferrer">Открыть PDF</a>'
-                    )
+        current_ids = {str(document["id"]) for document in documents}
+        if self._seen_document_ids is None:
+            self._seen_document_ids = await async_load_seen_ids(
+                self._document_store, current_ids
+            )
+
+        new_documents = find_new_documents(documents, self._seen_document_ids)
+        for document in sorted(new_documents, key=_document_sort_key):
+            document_id = document["id"]
+            try:
+                url = self.async_document_url(int(document_id))
+                message = (
+                    "Появилась новая квитанция ТГК-1 за "
+                    f"{document.get('period', 'неизвестный период')}. "
+                    f'<a href="{url}" target="_blank" rel="noopener noreferrer">Открыть PDF</a>'
+                )
+                def create_notification() -> None:
                     persistent_notification.async_create(
                         self.hass,
                         message,
                         title="Новая квитанция ТГК-1",
-                        notification_id=f"tgc1_receipt_{self._entry_id}",
+                        notification_id=f"tgc1_receipt_{self._entry_id}_{document_id}",
                     )
-                    event_data = {
-                        "document_id": newest_id,
-                        "name": newest.get("name"),
-                        "period": newest.get("period"),
-                        "date": newest.get("date"),
-                        "url": url,
-                    }
-                    self.hass.bus.async_fire("tgc1_new_document", event_data)
-                except Exception:
-                    _LOGGER.exception(
-                        "Не удалось создать уведомление о квитанции %s", newest_id
+
+                def fire_event() -> None:
+                    self.hass.bus.async_fire(
+                        "tgc1_new_document",
+                        {
+                            "document_id": document_id,
+                            "name": document.get("name"),
+                            "period": document.get("period"),
+                            "date": document.get("date"),
+                            "url": url,
+                        },
                     )
-                else:
-                    self._last_document_id = newest_id
+
+                process_document(
+                    document_id,
+                    self._seen_document_ids,
+                    create_notification,
+                    fire_event,
+                )
+            except (TypeError, ValueError):
+                _LOGGER.warning("Пропускаю документ с некорректным ID: %s", document_id)
+                continue
+            except Exception:
+                _LOGGER.exception(
+                    "Не удалось обработать новую квитанцию %s", document_id
+                )
+                continue
+
+        # A storage failure must not break the coordinator refresh.
+        await async_save_seen_ids(self._document_store, self._seen_document_ids)
 
         return data
 
@@ -164,24 +191,42 @@ class Tgc1Coordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     async def async_download_document(self, document_id: int, filename: str) -> str:
         """Скачивает PDF квитанции в /media/tgc1/ и возвращает путь."""
-        os.makedirs(MEDIA_DIR, exist_ok=True)
-        safe_name = Path(filename).name
-        target = Path(MEDIA_DIR) / safe_name
-
         try:
             content = await self.client.async_download_document(document_id)
         except Tgc1RejectedError as err:
-            raise ServiceValidationError(f"ЛК отклонил скачивание: {err}") from err
+            raise ServiceValidationError(
+                f"ЛК отклонил скачивание документа {document_id}"
+            ) from err
         except Tgc1AuthError as err:
-            raise HomeAssistantError(f"Не удалось авторизоваться в ЛК: {err}") from err
+            raise HomeAssistantError(
+                "Не удалось авторизоваться в личном кабинете ТГК-1"
+            ) from err
         except Tgc1ApiError as err:
-            raise HomeAssistantError(f"Ошибка сети при скачивании: {err}") from err
+            raise HomeAssistantError(
+                f"Не удалось скачать документ {document_id}"
+            ) from err
 
-        if not content.startswith(b"%PDF"):
-            raise HomeAssistantError(f"Документ {document_id} не является PDF")
+        safe_name = re.sub(r"[^A-Za-z0-9._-]", "_", Path(filename).name)[:100]
+        if not safe_name or safe_name in {".", ".."}:
+            safe_name = f"receipt-{document_id}.pdf"
+        if not safe_name.lower().endswith(".pdf"):
+            safe_name = f"{safe_name}.pdf"
+        target = Path(MEDIA_DIR) / f"{Path(safe_name).stem}-{document_id}.pdf"
 
-        with open(target, "wb") as f:
-            f.write(content)
+        def write_file() -> None:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            # Exclusive creation prevents silently overwriting an earlier receipt.
+            with target.open("xb") as pdf_file:
+                pdf_file.write(content)
+
+        try:
+            await self.hass.async_add_executor_job(write_file)
+        except FileExistsError:
+            _LOGGER.info("Квитанция %s уже сохранена в %s", document_id, target)
+        except OSError as err:
+            raise HomeAssistantError(
+                f"Не удалось сохранить квитанцию {document_id}"
+            ) from err
 
         _LOGGER.info("Квитанция %s сохранена в %s", document_id, target)
         return str(target)
@@ -261,12 +306,14 @@ class Tgc1Coordinator(DataUpdateCoordinator[dict[str, Any]]):
                     f"перед повторной попыткой: {err}"
                 ) from err
 
-            _LOGGER.info("tgc1 reading sent: %s", result)
+            _LOGGER.info("tgc1 reading accepted by the API: counter_id=%s", dev_id)
             await self.async_refresh()
-            after = self.data["devices"].get(dev_id, {})
+            refreshed = self.last_update_success
+            after = self.data["devices"].get(dev_id, {}) if refreshed else {}
             return {
                 **result,
                 "sent": True,
+                "refreshed": refreshed,
                 "reading_in_lk_now": after.get("lastReading"),
                 "date_in_lk_now": after.get("dtLastReading"),
             }
@@ -336,17 +383,18 @@ class Tgc1ReceiptView(HomeAssistantView):
         )
 
 
-def _latest_document(documents: list[dict[str, Any]]) -> dict[str, Any] | None:
-    """Select the newest document independently of API ordering."""
-    def sort_key(document: dict[str, Any]) -> tuple[date, int]:
-        parsed = _parse_date(document.get("date")) or date.min
-        try:
-            doc_id = int(document.get("id", 0))
-        except (TypeError, ValueError):
-            doc_id = 0
-        return parsed, doc_id
+def _document_sort_key(document: dict[str, Any]) -> tuple[date, int]:
+    """Sort documents by date, then ID, without depending on API ordering."""
+    parsed = _parse_date(document.get("date")) or date.min
+    try:
+        document_id = int(document.get("id", 0))
+    except (TypeError, ValueError):
+        document_id = 0
+    return parsed, document_id
 
-    return max(documents, key=sort_key, default=None)
+
+def _latest_document(documents: list[dict[str, Any]]) -> dict[str, Any] | None:
+    return max(documents, key=_document_sort_key, default=None)
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
@@ -381,22 +429,40 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     # NEW: обработчик скачивания документа
     async def _handle_download_document(call: ServiceCall) -> ServiceResponse:
         document_id = call.data["document_id"]
-        # Ищем координатор в загруженных конфигурациях
+        requested_entry_id = call.data.get("config_entry_id")
+        matches = []
         for entry in hass.config_entries.async_entries(DOMAIN):
             if entry.state is not ConfigEntryState.LOADED:
                 continue
-            coordinator = entry.runtime_data
-            docs = coordinator.data.get("documents", [])
-            doc = next(
-                (d for d in docs if str(d.get("id")) == str(document_id)), None
-            )
-            if doc is None:
+            if requested_entry_id and entry.entry_id != requested_entry_id:
                 continue
-            path = await coordinator.async_download_document(
-                document_id, doc.get("name") or f"{document_id}.pdf"
+            coordinator = entry.runtime_data
+            doc = next(
+                (
+                    item
+                    for item in coordinator.data.get("documents", [])
+                    if str(item.get("id")) == str(document_id)
+                ),
+                None,
             )
-            return {"path": path}
-        raise ServiceValidationError(f"Документ {document_id} не найден в загруженных аккаунтах ТГК-1")
+            if doc is not None:
+                matches.append((coordinator, doc))
+
+        if not matches:
+            raise ServiceValidationError(
+                f"Документ {document_id} не найден в выбранной интеграции ТГК-1"
+            )
+        if len(matches) > 1:
+            raise ServiceValidationError(
+                "ID документа найден в нескольких аккаунтах. "
+                "Укажи config_entry_id, чтобы выбрать нужный аккаунт."
+            )
+
+        coordinator, doc = matches[0]
+        path = await coordinator.async_download_document(
+            document_id, doc.get("name") or f"{document_id}.pdf"
+        )
+        return {"path": path}
 
     hass.services.async_register(
         DOMAIN,

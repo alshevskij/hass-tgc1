@@ -38,21 +38,43 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     coordinator = entry.runtime_data
-    entities: list[SensorEntity] = []
-    
-    for dev_id in coordinator.data["devices"]:
-        entities.append(Tgc1ReadingSensor(coordinator, dev_id))
-        entities.append(Tgc1LastReadingDateSensor(coordinator, dev_id))
-        entities.append(Tgc1VerificationDateSensor(coordinator, dev_id))
-        
-    for acc_id in coordinator.data["accounts"]:
-        entities.append(Tgc1DebtSensor(coordinator, acc_id))
-        
-    # NEW: Добавляем два сенсора для квитанций (привязаны к лицевому счёту)
-    entities.append(Tgc1LastReceiptDateSensor(coordinator))
-    entities.append(Tgc1LastReceiptIdSensor(coordinator))
-    
-    async_add_entities(entities)
+    known_devices: set[int] = set()
+    known_accounts: set[int] = set()
+
+    def collect_new_entities() -> list[SensorEntity]:
+        entities: list[SensorEntity] = []
+        for dev_id in coordinator.data["devices"]:
+            if dev_id in known_devices:
+                continue
+            known_devices.add(dev_id)
+            entities.extend(
+                (
+                    Tgc1ReadingSensor(coordinator, dev_id),
+                    Tgc1LastReadingDateSensor(coordinator, dev_id),
+                    Tgc1VerificationDateSensor(coordinator, dev_id),
+                )
+            )
+        for acc_id in coordinator.data["accounts"]:
+            if acc_id in known_accounts:
+                continue
+            known_accounts.add(acc_id)
+            entities.append(Tgc1DebtSensor(coordinator, acc_id))
+        return entities
+
+    async_add_entities(
+        [
+            *collect_new_entities(),
+            Tgc1LastReceiptDateSensor(coordinator),
+            Tgc1LastReceiptIdSensor(coordinator),
+        ]
+    )
+
+    def handle_coordinator_update() -> None:
+        new_entities = collect_new_entities()
+        if new_entities:
+            async_add_entities(new_entities)
+
+    entry.async_on_unload(coordinator.async_add_listener(handle_coordinator_update))
 
 
 class Tgc1MeterEntity(CoordinatorEntity[Tgc1Coordinator], SensorEntity):

@@ -24,20 +24,41 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     coordinator = entry.runtime_data
-    entities = []
-    
-    # 1. Существующие кнопки передачи показаний
-    for dev_id in coordinator.data["devices"]:
-        entities.append(Tgc1SubmitButton(coordinator, dev_id))
-        
-    # 2. Новая кнопка для скачивания последней квитанции
-    # Привязываем к первому лицевому счету
-    if coordinator.data.get("accounts"):
-        acc_id = next(iter(coordinator.data["accounts"]))
-        entities.append(Tgc1DownloadReceiptButton(coordinator, acc_id))
-        entities.append(Tgc1SaveReceiptButton(coordinator, acc_id))
+    known_devices = set(coordinator.data["devices"])
 
-    async_add_entities(entities)
+    async_add_entities(
+        Tgc1SubmitButton(coordinator, dev_id) for dev_id in known_devices
+    )
+
+    # Receipt buttons use the shared document feed and are created once.
+    receipt_buttons_added = False
+
+    def add_receipt_buttons() -> None:
+        nonlocal receipt_buttons_added
+        accounts = coordinator.data.get("accounts", {})
+        if receipt_buttons_added or not accounts:
+            return
+        acc_id = next(iter(accounts))
+        async_add_entities(
+            (
+                Tgc1DownloadReceiptButton(coordinator, acc_id),
+                Tgc1SaveReceiptButton(coordinator, acc_id),
+            )
+        )
+        receipt_buttons_added = True
+
+    add_receipt_buttons()
+
+    def handle_coordinator_update() -> None:
+        new_devices = set(coordinator.data["devices"]) - known_devices
+        if new_devices:
+            known_devices.update(new_devices)
+            async_add_entities(
+                Tgc1SubmitButton(coordinator, dev_id) for dev_id in new_devices
+            )
+        add_receipt_buttons()
+
+    entry.async_on_unload(coordinator.async_add_listener(handle_coordinator_update))
 
 
 class Tgc1SubmitButton(Tgc1MeterBase, ButtonEntity):
