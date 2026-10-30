@@ -10,19 +10,24 @@ _LOGGER = logging.getLogger(__name__)
 
 
 def _bounded_seen_ids(seen_ids: set[str]) -> set[str]:
-    """Keep the 500 highest numeric document IDs."""
-    return set(sorted(seen_ids, key=int)[-500:])
+    """Keep the 500 highest positive numeric document IDs."""
+    numeric_ids = {
+        str(int(item))
+        for item in seen_ids
+        if str(item).isdigit() and int(item) > 0
+    }
+    return set(sorted(numeric_ids, key=int)[-500:])
 
 
 def restore_seen_ids(stored: Any, current_ids: set[str]) -> set[str]:
-    """Restore history, or establish a silent baseline on first installation."""
+    """Restore valid history, or establish a silent baseline on first installation."""
     if (
         isinstance(stored, dict)
         and isinstance(stored.get("ids"), list)
         and (stored.get("initialized") is True or bool(stored["ids"]))
     ):
-        return {str(item) for item in stored["ids"]}
-    return set(current_ids)
+        return _bounded_seen_ids({str(item) for item in stored["ids"]})
+    return _bounded_seen_ids(current_ids)
 
 
 def find_new_documents(
@@ -50,7 +55,7 @@ async def async_load_seen_ids(store: Any, current_ids: set[str]) -> set[str]:
             "Не удалось прочитать историю квитанций ТГК-1; "
             "текущие документы будут приняты за исходную историю"
         )
-        return set(current_ids)
+        return _bounded_seen_ids(current_ids)
     return restore_seen_ids(stored, current_ids)
 
 
