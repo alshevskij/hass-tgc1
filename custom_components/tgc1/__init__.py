@@ -164,6 +164,8 @@ class Tgc1Coordinator(DataUpdateCoordinator[dict[str, Any]]):
             content = await self.client.async_download_document(document_id)
         except Tgc1RejectedError as err:
             raise ServiceValidationError(f"ЛК отклонил скачивание: {err}") from err
+        except Tgc1AuthError as err:
+            raise HomeAssistantError(f"Не удалось авторизоваться в ЛК: {err}") from err
         except Tgc1ApiError as err:
             raise HomeAssistantError(f"Ошибка сети при скачивании: {err}") from err
 
