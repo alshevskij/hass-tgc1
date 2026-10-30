@@ -64,6 +64,13 @@ class ReceiptHistoryTests(unittest.IsolatedAsyncioTestCase):
             restore_seen_ids({"ids": [1, "2"]}, {"3"}), {"1", "2"}
         )
 
+    def test_invalid_persisted_ids_are_ignored(self):
+        restored = restore_seen_ids(
+            {"initialized": True, "ids": ["501", "broken", 0, -2, True]},
+            {"600"},
+        )
+        self.assertEqual(restored, {"501"})
+
     def test_history_is_bounded_to_latest_500_sorted_ids(self):
         stored = serialize_seen_ids({str(item) for item in range(600)})
 
@@ -71,7 +78,6 @@ class ReceiptHistoryTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(stored["ids"]), 500)
         self.assertEqual(stored["ids"][0], "100")
         self.assertEqual(stored["ids"][-1], "599")
-
 
     async def test_storage_load_failure_uses_current_documents_as_baseline(self):
         class BrokenStore:
@@ -107,7 +113,6 @@ class ReceiptHistoryTests(unittest.IsolatedAsyncioTestCase):
         store = MemoryStore()
         self.assertTrue(await async_save_seen_ids(store, set()))
         self.assertEqual(store.data, {"initialized": True, "ids": []})
-
 
     def test_document_is_marked_seen_only_after_both_actions_succeed(self):
         seen_ids = set()
