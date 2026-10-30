@@ -94,7 +94,7 @@ class Tgc1DownloadReceiptButton(CoordinatorEntity[Tgc1Coordinator], ButtonEntity
         persistent_notification.async_create(
             self.hass,
             f"Квитанция ТГК-1 за {latest_doc.get('period', 'неизвестный период')}. "
-            f"[Открыть PDF]({url})",
+            f'<a href="{url}" target="_blank" rel="noopener noreferrer">Открыть PDF</a>',
             title="Квитанция ТГК-1",
             notification_id=f"tgc1_receipt_{self.coordinator._entry_id}",
         )
