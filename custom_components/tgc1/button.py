@@ -96,5 +96,5 @@ class Tgc1DownloadReceiptButton(CoordinatorEntity[Tgc1Coordinator], ButtonEntity
             f"Квитанция ТГК-1 за {latest_doc.get('period', 'неизвестный период')}. "
             f"[Открыть PDF]({url})",
             title="Квитанция ТГК-1",
-            notification_id=f"tgc1_receipt_{self.coordinator.config_entry.entry_id}",
+            notification_id=f"tgc1_receipt_{self.coordinator._entry_id}",
         )
