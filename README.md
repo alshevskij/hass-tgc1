@@ -148,9 +148,9 @@ tap_action:
   navigation_path: /media-browser/browser
 ```
 
-## Обновления
+## История изменений
 
-### 2026.10.1
+### [2026.10.1](https://github.com/alshevskij/hass-tgc1/releases/tag/2026.10.1)
 
 Первый релиз с календарной нумерацией версий.
 
