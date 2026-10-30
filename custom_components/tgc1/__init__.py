@@ -6,6 +6,7 @@ import asyncio
 from datetime import date, datetime, timedelta
 import logging
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -149,7 +150,7 @@ class Tgc1Coordinator(DataUpdateCoordinator[dict[str, Any]]):
 
     def async_document_url(self, document_id: int) -> str:
         """Return a 24-hour signed URL for a document in this entry."""
-        path = f"/api/tgc1/receipt/{self.config_entry.entry_id}/{document_id}"
+        path = f"/api/tgc1/receipt/{self._entry_id}/{document_id}"
         return async_sign_path(
             self.hass, path, timedelta(hours=24), use_content_user=True
         )
@@ -281,7 +282,7 @@ class Tgc1ReceiptView(HomeAssistantView):
         except ValueError:
             raise web.HTTPNotFound() from None
         coordinator = entry.runtime_data
-        doc = next((item for item in coordinator.data.get("documents", []) if item.get("id") == doc_id), None)
+        doc = next((item for item in coordinator.data.get("documents", []) if str(item.get("id")) == str(doc_id)), None)
         if doc is None:
             raise web.HTTPNotFound()
         try:
@@ -295,6 +296,9 @@ class Tgc1ReceiptView(HomeAssistantView):
             _LOGGER.error("Ошибка получения квитанции %s: %s", doc_id, err)
             raise web.HTTPBadGateway() from err
         filename = Path(str(doc.get("name") or f"receipt-{doc_id}.pdf")).name
+        filename = re.sub(r"[^A-Za-z0-9._-]", "_", filename)[:120]
+        if not filename or filename in {".", ".."}:
+            filename = f"receipt-{doc_id}.pdf"
         if not filename.lower().endswith(".pdf"):
             filename = f"{filename}.pdf"
         return web.Response(
@@ -359,7 +363,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
                 continue
             coordinator = entry.runtime_data
             docs = coordinator.data.get("documents", [])
-            doc = next((d for d in docs if d.get("id") == document_id), None)
+            doc = next((d for d in docs if str(d.get("id")) == str(document_id)), None)
             if doc is None:
                 continue
             path = await coordinator.async_download_document(document_id, doc.get("name") or f"{document_id}.pdf")
