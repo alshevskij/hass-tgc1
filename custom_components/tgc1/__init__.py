@@ -163,6 +163,11 @@ class Tgc1Coordinator(DataUpdateCoordinator[dict[str, Any]]):
             except (TypeError, ValueError):
                 _LOGGER.warning("Пропускаю документ с некорректным ID: %s", document_id)
                 continue
+            except Exception:
+                _LOGGER.exception(
+                    "Не удалось обработать новую квитанцию %s", document_id
+                )
+                continue
 
         # Keep storage bounded while retaining enough history to avoid duplicate events.
         try:
