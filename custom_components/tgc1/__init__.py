@@ -35,7 +35,11 @@ from homeassistant.helpers.typing import ConfigType
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import Tgc1ApiError, Tgc1AuthError, Tgc1Client, Tgc1RejectedError
-from .document_tracker import find_new_documents, restore_seen_ids, serialize_seen_ids
+from .document_tracker import (
+    async_load_seen_ids,
+    async_save_seen_ids,
+    find_new_documents,
+)
 from .const import (
     DEFAULT_MAX_INCREASE,
     DOMAIN,
@@ -123,8 +127,9 @@ class Tgc1Coordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         current_ids = {str(document["id"]) for document in documents}
         if self._seen_document_ids is None:
-            stored = await self._document_store.async_load()
-            self._seen_document_ids = restore_seen_ids(stored, current_ids)
+            self._seen_document_ids = await async_load_seen_ids(
+                self._document_store, current_ids
+            )
 
         new_documents = find_new_documents(documents, self._seen_document_ids)
         for document in sorted(new_documents, key=_document_sort_key):
@@ -162,14 +167,8 @@ class Tgc1Coordinator(DataUpdateCoordinator[dict[str, Any]]):
                 )
                 continue
 
-        # Keep storage bounded while retaining enough history to avoid duplicate events.
-        try:
-            self._seen_document_ids = set(sorted(self._seen_document_ids)[-500:])
-            await self._document_store.async_save(
-                serialize_seen_ids(self._seen_document_ids)
-            )
-        except OSError:
-            _LOGGER.exception("Не удалось сохранить историю квитанций ТГК-1")
+        # A storage failure must not break the coordinator refresh.
+        await async_save_seen_ids(self._document_store, self._seen_document_ids)
 
         return data
 
