@@ -170,12 +170,16 @@ class Tgc1Client:
                 raise Tgc1ApiError(
                     f"Unexpected {resource} response: record without id"
                 )
-            try:
-                item["id"] = int(item["id"])
-            except (TypeError, ValueError) as err:
+            raw_id = item["id"]
+            if isinstance(raw_id, bool) or not str(raw_id).isdigit():
                 raise Tgc1ApiError(
                     f"Unexpected {resource} response: invalid record ID"
-                ) from err
+                )
+            item["id"] = int(raw_id)
+            if item["id"] < 1:
+                raise Tgc1ApiError(
+                    f"Unexpected {resource} response: invalid record ID"
+                )
         return data
 
     async def async_get_devices(self) -> list[dict[str, Any]]:
