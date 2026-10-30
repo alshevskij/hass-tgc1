@@ -125,7 +125,8 @@ class Tgc1Coordinator(DataUpdateCoordinator[dict[str, Any]]):
                 try:
                     url = self.async_document_url(newest_id)
                     message = (
-                        f"Появилась новая квитанция ТГК-1 за {newest.get('period', 'неизвестный период')}. "
+                        "Появилась новая квитанция ТГК-1 за "
+                        f"{newest.get('period', 'неизвестный период')}. "
                         f"[Открыть PDF]({url})"
                     )
                     persistent_notification.async_create(
@@ -143,7 +144,9 @@ class Tgc1Coordinator(DataUpdateCoordinator[dict[str, Any]]):
                     }
                     self.hass.bus.async_fire("tgc1_new_document", event_data)
                 except Exception:
-                    _LOGGER.exception("Не удалось создать уведомление о квитанции %s", newest_id)
+                    _LOGGER.exception(
+                        "Не удалось создать уведомление о квитанции %s", newest_id
+                    )
             self._last_document_id = newest_id
 
         return data
@@ -272,17 +275,30 @@ class Tgc1ReceiptView(HomeAssistantView):
     name = "api:tgc1:receipt"
     requires_auth = True
 
-    async def get(self, request: web.Request, entry_id: str, document_id: str) -> web.Response:
+    async def get(
+        self, request: web.Request, entry_id: str, document_id: str
+    ) -> web.Response:
         hass = request.app[KEY_HASS]
         entry = hass.config_entries.async_get_entry(entry_id)
-        if entry is None or entry.domain != DOMAIN or entry.state is not ConfigEntryState.LOADED:
+        if (
+            entry is None
+            or entry.domain != DOMAIN
+            or entry.state is not ConfigEntryState.LOADED
+        ):
             raise web.HTTPNotFound()
         try:
             doc_id = int(document_id)
         except ValueError:
             raise web.HTTPNotFound() from None
         coordinator = entry.runtime_data
-        doc = next((item for item in coordinator.data.get("documents", []) if str(item.get("id")) == str(doc_id)), None)
+        doc = next(
+            (
+                item
+                for item in coordinator.data.get("documents", [])
+                if str(item.get("id")) == str(doc_id)
+            ),
+            None,
+        )
         if doc is None:
             raise web.HTTPNotFound()
         try:
@@ -290,7 +306,11 @@ class Tgc1ReceiptView(HomeAssistantView):
         except Tgc1RejectedError:
             raise web.HTTPNotFound() from None
         except Tgc1AuthError as err:
-            _LOGGER.error("Авторизация ТГК-1 не удалась при выдаче квитанции %s: %s", doc_id, err)
+            _LOGGER.error(
+                "Авторизация ТГК-1 не удалась при выдаче квитанции %s: %s",
+                doc_id,
+                err,
+            )
             raise web.HTTPBadGateway() from err
         except Tgc1ApiError as err:
             _LOGGER.error("Ошибка получения квитанции %s: %s", doc_id, err)
@@ -363,10 +383,14 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
                 continue
             coordinator = entry.runtime_data
             docs = coordinator.data.get("documents", [])
-            doc = next((d for d in docs if str(d.get("id")) == str(document_id)), None)
+            doc = next(
+                (d for d in docs if str(d.get("id")) == str(document_id)), None
+            )
             if doc is None:
                 continue
-            path = await coordinator.async_download_document(document_id, doc.get("name") or f"{document_id}.pdf")
+            path = await coordinator.async_download_document(
+                document_id, doc.get("name") or f"{document_id}.pdf"
+            )
             return {"path": path}
         raise ServiceValidationError(f"Документ {document_id} не найден в загруженных аккаунтах ТГК-1")
 
