@@ -45,7 +45,7 @@ class Tgc1SubmitButton(Tgc1MeterBase, ButtonEntity):
     _attr_icon = "mdi:send"
 
     def __init__(self, coordinator: Tgc1Coordinator, dev_id: int) -> None:
-        super().__init__(coordinator, dev_id, "reading_submit", "передать показание")
+        super().__init__(coordinator, dev_id, "reading_submit", "передать показания")
 
     async def async_press(self) -> None:
         value = self.coordinator.pending_readings.get(self._dev_id)
