@@ -18,6 +18,8 @@
 
 ### Через HACS (рекомендуется)
 
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=alshevskij&repository=hass-tgc1&category=integration)
+
 1. Убедитесь, что у вас установлен [HACS](https://hacs.xyz/).
 2. В HACS перейдите в раздел **Интеграции**.
 3. Нажмите на три точки в правом верхнем углу и выберите **Custom repositories**.
