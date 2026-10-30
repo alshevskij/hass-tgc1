@@ -23,7 +23,7 @@ from custom_components.tgc1.document_tracker import (  # noqa: E402
 )
 
 
-class ReceiptHistoryTests(unittest.TestCase):
+class ReceiptHistoryTests(unittest.IsolatedAsyncioTestCase):
     def test_first_run_baselines_existing_documents_without_notifications(self):
         documents = [{"id": 101}, {"id": 102}]
         seen_ids = restore_seen_ids(None, {"101", "102"})
