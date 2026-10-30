@@ -4,12 +4,32 @@
   <img src="https://raw.githubusercontent.com/alshevskij/hass-tgc1/main/images/logo_tgc.png" alt="Логотип ТГК-1" width="200">
 </p>
 
-[![HACS Custom](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://github.com/hacs/integration)
-[![GitHub Release](https://img.shields.io/github/v/release/alshevskij/hass-tgc1)](https://github.com/alshevskij/hass-tgc1/releases)
+[![HACS Custom](https://img.shields.io/badge/HACS-Custom-41BDF5.svg?logo=homeassistant)](https://github.com/hacs/integration)
+[![Latest Release](https://img.shields.io/github/v/release/alshevskij/hass-tgc1?display_name=tag&sort=semver)](https://github.com/alshevskij/hass-tgc1/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/alshevskij/hass-tgc1/total)](https://github.com/alshevskij/hass-tgc1/releases)
+[![Stars](https://img.shields.io/github/stars/alshevskij/hass-tgc1?style=flat)](https://github.com/alshevskij/hass-tgc1/stargazers)
+[![Issues](https://img.shields.io/github/issues/alshevskij/hass-tgc1)](https://github.com/alshevskij/hass-tgc1/issues)
 [![License](https://img.shields.io/github/license/alshevskij/hass-tgc1)](https://github.com/alshevskij/hass-tgc1/blob/main/LICENSE)
-[![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2026.3%2B-blue)](https://www.home-assistant.io/)
+[![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2026.3%2B-blue?logo=homeassistant)](https://www.home-assistant.io/)
 
 Неофициальная интеграция для [Home Assistant](https://www.home-assistant.io/), которая подключается к личному кабинету [lk.tgc1.ru](https://lk.tgc1.ru/) ПАО «ТГК-1» и предоставляет данные о счётчиках, задолженности и квитанциях.
+
+**[Установка через HACS](https://my.home-assistant.io/redirect/hacs_repository/?owner=alshevskij&repository=hass-tgc1&category=integration)** · **[Последний релиз](https://github.com/alshevskij/hass-tgc1/releases/latest)** · **[Сообщить об ошибке](https://github.com/alshevskij/hass-tgc1/issues/new/choose)**
+
+## Содержание
+
+- [Возможности](#возможности)
+- [Установка](#установка)
+- [Настройка](#настройка)
+- [Сущности и сценарии использования](#сущности-и-сценарии-использования)
+  - [Передача показаний](#передача-показаний)
+  - [Сервис `tgc1.submit_reading`](#сервис-tgc1submit_reading)
+  - [Сервис `tgc1.download_document`](#сервис-tgc1download_document)
+  - [Уведомления о новых квитанциях](#уведомления-о-новых-квитанциях)
+  - [Папка с сохранёнными квитанциями](#папка-с-сохранёнными-квитанциями)
+- [Решение проблем](#решение-проблем)
+- [История изменений](#история-изменений)
+- [Дисклеймер](#дисклеймер)
 
 ## Возможности
 
