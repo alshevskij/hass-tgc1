@@ -1,6 +1,7 @@
-<p align="center">
+<p>
   <img src="https://raw.githubusercontent.com/alshevskij/hass-tgc1/main/images/logo_tgc.png" alt="Логотип ТГК-1" width="200">
 </p>
+
 # Личный кабинет ПАО «ТГК-1» в твоём Home Assistant!
 
 [![HACS Custom](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://github.com/hacs/integration)
