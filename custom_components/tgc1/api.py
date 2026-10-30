@@ -144,7 +144,19 @@ class Tgc1Client:
                         text = (await resp.text())[:300]
                         raise Tgc1RejectedError(f"HTTP {resp.status}: {text}")
                     resp.raise_for_status()
-                    return await resp.read()
+                    content_type = resp.headers.get("Content-Type", "").split(";", 1)[0].lower()
+                    content_length = resp.content_length
+                    max_size = 25 * 1024 * 1024
+                    if content_length is not None and content_length > max_size:
+                        raise Tgc1ApiError("PDF exceeds the 25 MiB limit")
+                    content = await resp.content.read(max_size + 1)
+                    if len(content) > max_size:
+                        raise Tgc1ApiError("PDF exceeds the 25 MiB limit")
+                    if not content.startswith(b"%PDF"):
+                        raise Tgc1ApiError(
+                            f"Unexpected document response (Content-Type: {content_type or 'unknown'})"
+                        )
+                    return content
             except (aiohttp.ClientError, asyncio.TimeoutError) as err:
                 raise Tgc1ApiError(f"Request failed: {err}") from err
         raise Tgc1ApiError("Request failed")
