@@ -1,12 +1,17 @@
 {
   "domain": "tgc1",
   "name": "ТГК-1: Личный кабинет",
-  "codeowners": ["@alshevskij"],
+  "codeowners": [
+    "@alshevskij"
+  ],
   "config_flow": true,
   "documentation": "https://github.com/alshevskij/hass-tgc1",
   "integration_type": "service",
   "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/alshevskij/hass-tgc1/issues",
   "requirements": [],
-  "version": "0.1.0"
+  "version": "0.1.0",
+  "dependencies": [
+    "http"
+  ]
 }
