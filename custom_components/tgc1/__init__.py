@@ -123,10 +123,17 @@ class Tgc1Coordinator(DataUpdateCoordinator[dict[str, Any]]):
         current_ids = {str(document["id"]) for document in documents}
         if self._seen_document_ids is None:
             stored = await self._document_store.async_load()
-            if isinstance(stored, dict) and isinstance(stored.get("ids"), list):
+            if (
+                isinstance(stored, dict)
+                and isinstance(stored.get("ids"), list)
+                and (stored.get("initialized") is True or bool(stored["ids"]))
+            ):
+                # The non-empty IDs shape also supports data saved by older versions.
                 self._seen_document_ids = {str(item) for item in stored["ids"]}
             else:
                 # First installation: establish a baseline and do not notify for old files.
+                # An explicit marker distinguishes an initialized empty history from no
+                # history at all, so an empty account stays quiet after every restart.
                 self._seen_document_ids = set(current_ids)
 
         new_documents = [
@@ -171,10 +178,10 @@ class Tgc1Coordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         # Keep storage bounded while retaining enough history to avoid duplicate events.
         try:
-            await self._document_store.async_save(
-                {"ids": sorted(self._seen_document_ids)[-500:]}
-            )
             self._seen_document_ids = set(sorted(self._seen_document_ids)[-500:])
+            await self._document_store.async_save(
+                {"initialized": True, "ids": sorted(self._seen_document_ids)}
+            )
         except OSError:
             _LOGGER.exception("Не удалось сохранить историю квитанций ТГК-1")
 
