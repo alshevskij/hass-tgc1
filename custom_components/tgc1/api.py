@@ -88,13 +88,18 @@ class Tgc1Client:
         response_format: str = "json",
     ) -> Any:
         """Perform an authenticated request, refreshing the token once."""
-        for attempt in range(2):
+        # Retrying a non-idempotent request (notably POST reading submission)
+        # could create a duplicate if the server processed it before returning
+        # an authentication error. Only retry safe read methods.
+        retry_auth = method.upper() in {"GET", "HEAD", "OPTIONS"}
+        for attempt in range(2 if retry_auth else 1):
             if self._token is None:
                 await self.async_login()
 
+            request_token = self._token
             headers = {
                 **REQUEST_HEADERS,
-                "Authorization": f"Bearer {self._token}",
+                "Authorization": f"Bearer {request_token}",
             }
             try:
                 async with self._session.request(
@@ -105,8 +110,12 @@ class Tgc1Client:
                     timeout=TIMEOUT,
                 ) as response:
                     if response.status in (401, 403):
-                        self._token = None
-                        if attempt == 0:
+                        # A concurrent request may already have refreshed the
+                        # token. Never clear a newer token because of a stale
+                        # response sent with the previous one.
+                        if self._token == request_token:
+                            self._token = None
+                        if retry_auth and attempt == 0:
                             continue
                         raise Tgc1AuthError(
                             f"Access denied: HTTP {response.status}"
