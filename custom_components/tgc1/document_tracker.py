@@ -9,6 +9,11 @@ from typing import Any
 _LOGGER = logging.getLogger(__name__)
 
 
+def _bounded_seen_ids(seen_ids: set[str]) -> set[str]:
+    """Keep the 500 highest numeric document IDs."""
+    return set(sorted(seen_ids, key=int)[-500:])
+
+
 def restore_seen_ids(stored: Any, current_ids: set[str]) -> set[str]:
     """Restore history, or establish a silent baseline on first installation."""
     if (
@@ -33,7 +38,7 @@ def find_new_documents(
 
 def serialize_seen_ids(seen_ids: set[str]) -> dict[str, Any]:
     """Serialize a bounded history, including an explicitly initialized empty one."""
-    return {"initialized": True, "ids": sorted(seen_ids)[-500:]}
+    return {"initialized": True, "ids": sorted(_bounded_seen_ids(seen_ids), key=int)}
 
 
 async def async_load_seen_ids(store: Any, current_ids: set[str]) -> set[str]:
@@ -51,7 +56,7 @@ async def async_load_seen_ids(store: Any, current_ids: set[str]) -> set[str]:
 
 async def async_save_seen_ids(store: Any, seen_ids: set[str]) -> bool:
     """Save bounded history without failing the coordinator refresh on storage errors."""
-    bounded_ids = set(sorted(seen_ids)[-500:])
+    bounded_ids = _bounded_seen_ids(seen_ids)
     seen_ids.clear()
     seen_ids.update(bounded_ids)
     try:
