@@ -2,9 +2,19 @@
 
 from __future__ import annotations
 
+import sys
+import types
 import unittest
+from pathlib import Path
 
-from custom_components.tgc1.api import Tgc1ApiError, Tgc1Client
+# Load the API module without importing the Home Assistant integration package.
+package = types.ModuleType("custom_components.tgc1")
+package.__path__ = [
+    str(Path(__file__).resolve().parents[1] / "custom_components" / "tgc1")
+]
+sys.modules.setdefault("custom_components.tgc1", package)
+
+from custom_components.tgc1.api import Tgc1ApiError, Tgc1Client  # noqa: E402
 
 
 class ApiResponseValidationTests(unittest.TestCase):
