@@ -6,11 +6,16 @@ import asyncio
 from datetime import date, datetime, timedelta
 import logging
 import os
+import re
 from pathlib import Path
 from typing import Any
 
 import voluptuous as vol
+from aiohttp import web
 
+from homeassistant.components import persistent_notification
+from homeassistant.components.http import KEY_HASS, HomeAssistantView
+from homeassistant.components.http.auth import async_sign_path
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME, Platform
 from homeassistant.core import (
@@ -89,6 +94,7 @@ class Tgc1Coordinator(DataUpdateCoordinator[dict[str, Any]]):
             update_interval=timedelta(hours=UPDATE_INTERVAL_HOURS),
         )
         self.client = client
+        self._entry_id = entry.entry_id
         self._submit_lock = asyncio.Lock()
         # reading typed in the number entity, per meter id
         self.pending_readings: dict[int, float | None] = {}
@@ -112,32 +118,50 @@ class Tgc1Coordinator(DataUpdateCoordinator[dict[str, Any]]):
             "documents": documents,  # NEW: список документов
         }
 
-        # NEW: логика проверки новой квитанции
-        if documents:
-            newest = documents[0]  # API отдаёт по убыванию даты
-            newest_id = newest["id"]
-
-            if self._last_document_id is not None and newest_id != self._last_document_id:
+        newest = _latest_document(documents)
+        if newest is not None:
+            newest_id = newest.get("id")
+            if self._last_document_id is None:
+                # Establish the initial baseline without notifying about old receipts.
+                self._last_document_id = newest_id
+            elif newest_id != self._last_document_id:
                 try:
-                    path = await self.async_download_document(newest_id, newest["name"])
-                    self.hass.bus.async_fire(
-                        "tgc1_new_document",
-                        {
-                            "document_id": newest_id,
-                            "name": newest["name"],
-                            "period": newest["period"],
-                            "date": newest["date"],
-                            "path": path,
-                        },
+                    url = self.async_document_url(newest_id)
+                    message = (
+                        "Появилась новая квитанция ТГК-1 за "
+                        f"{newest.get('period', 'неизвестный период')}. "
+                        f'<a href="{url}" target="_blank" rel="noopener noreferrer">Открыть PDF</a>'
                     )
-                except Exception as err:
-                    _LOGGER.error("Не удалось скачать квитанцию %s: %s", newest_id, err)
-
-            self._last_document_id = newest_id
+                    persistent_notification.async_create(
+                        self.hass,
+                        message,
+                        title="Новая квитанция ТГК-1",
+                        notification_id=f"tgc1_receipt_{self._entry_id}",
+                    )
+                    event_data = {
+                        "document_id": newest_id,
+                        "name": newest.get("name"),
+                        "period": newest.get("period"),
+                        "date": newest.get("date"),
+                        "url": url,
+                    }
+                    self.hass.bus.async_fire("tgc1_new_document", event_data)
+                except Exception:
+                    _LOGGER.exception(
+                        "Не удалось создать уведомление о квитанции %s", newest_id
+                    )
+                else:
+                    self._last_document_id = newest_id
 
         return data
 
-    # NEW: метод для скачивания квитанции
+    def async_document_url(self, document_id: int) -> str:
+        """Return a 24-hour signed URL for a document in this entry."""
+        path = f"/api/tgc1/receipt/{self._entry_id}/{document_id}"
+        return async_sign_path(
+            self.hass, path, timedelta(hours=24), use_content_user=True
+        )
+
     async def async_download_document(self, document_id: int, filename: str) -> str:
         """Скачивает PDF квитанции в /media/tgc1/ и возвращает путь."""
         os.makedirs(MEDIA_DIR, exist_ok=True)
@@ -148,11 +172,13 @@ class Tgc1Coordinator(DataUpdateCoordinator[dict[str, Any]]):
             content = await self.client.async_download_document(document_id)
         except Tgc1RejectedError as err:
             raise ServiceValidationError(f"ЛК отклонил скачивание: {err}") from err
+        except Tgc1AuthError as err:
+            raise HomeAssistantError(f"Не удалось авторизоваться в ЛК: {err}") from err
         except Tgc1ApiError as err:
             raise HomeAssistantError(f"Ошибка сети при скачивании: {err}") from err
 
         if not content.startswith(b"%PDF"):
-            _LOGGER.warning("Документ %s не похож на PDF", document_id)
+            raise HomeAssistantError(f"Документ {document_id} не является PDF")
 
         with open(target, "wb") as f:
             f.write(content)
@@ -246,7 +272,86 @@ class Tgc1Coordinator(DataUpdateCoordinator[dict[str, Any]]):
             }
 
 
+class Tgc1ReceiptView(HomeAssistantView):
+    """Serve a receipt PDF after validating its config entry and document ID."""
+
+    url = "/api/tgc1/receipt/{entry_id}/{document_id}"
+    name = "api:tgc1:receipt"
+    requires_auth = True
+
+    async def get(
+        self, request: web.Request, entry_id: str, document_id: str
+    ) -> web.Response:
+        hass = request.app[KEY_HASS]
+        entry = hass.config_entries.async_get_entry(entry_id)
+        if (
+            entry is None
+            or entry.domain != DOMAIN
+            or entry.state is not ConfigEntryState.LOADED
+        ):
+            raise web.HTTPNotFound()
+        try:
+            doc_id = int(document_id)
+        except ValueError:
+            raise web.HTTPNotFound() from None
+        coordinator = entry.runtime_data
+        doc = next(
+            (
+                item
+                for item in coordinator.data.get("documents", [])
+                if str(item.get("id")) == str(doc_id)
+            ),
+            None,
+        )
+        if doc is None:
+            raise web.HTTPNotFound()
+        try:
+            content = await coordinator.client.async_download_document(doc_id)
+        except Tgc1RejectedError:
+            raise web.HTTPNotFound() from None
+        except Tgc1AuthError as err:
+            _LOGGER.error(
+                "Авторизация ТГК-1 не удалась при выдаче квитанции %s: %s",
+                doc_id,
+                err,
+            )
+            raise web.HTTPBadGateway() from err
+        except Tgc1ApiError as err:
+            _LOGGER.error("Ошибка получения квитанции %s: %s", doc_id, err)
+            raise web.HTTPBadGateway() from err
+        filename = Path(str(doc.get("name") or f"receipt-{doc_id}.pdf")).name
+        filename = re.sub(r"[^A-Za-z0-9._-]", "_", filename)[:120]
+        if not filename or filename in {".", ".."}:
+            filename = f"receipt-{doc_id}.pdf"
+        if not filename.lower().endswith(".pdf"):
+            filename = f"{filename}.pdf"
+        return web.Response(
+            body=content,
+            content_type="application/pdf",
+            headers={
+                "Content-Disposition": f'inline; filename="{filename}"',
+                "Cache-Control": "no-store",
+                "X-Content-Type-Options": "nosniff",
+            },
+        )
+
+
+def _latest_document(documents: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Select the newest document independently of API ordering."""
+    def sort_key(document: dict[str, Any]) -> tuple[date, int]:
+        parsed = _parse_date(document.get("date")) or date.min
+        try:
+            doc_id = int(document.get("id", 0))
+        except (TypeError, ValueError):
+            doc_id = 0
+        return parsed, doc_id
+
+    return max(documents, key=sort_key, default=None)
+
+
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
+    hass.http.register_view(Tgc1ReceiptView())
+
     async def _handle_submit_reading(call: ServiceCall) -> ServiceResponse:
         registry = er.async_get(hass)
         ent = registry.async_get(call.data["entity_id"])
@@ -278,17 +383,20 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         document_id = call.data["document_id"]
         # Ищем координатор в загруженных конфигурациях
         for entry in hass.config_entries.async_entries(DOMAIN):
-            if entry.state is ConfigEntryState.LOADED:
-                coordinator = entry.runtime_data
-                docs = coordinator.data.get("documents", [])
-                doc = next((d for d in docs if d["id"] == document_id), None)
-                if not doc:
-                    raise ServiceValidationError(f"Документ {document_id} не найден")
-                path = await coordinator.async_download_document(
-                    document_id, doc["name"]
-                )
-                return {"path": path}
-        raise ServiceValidationError("Интеграция ТГК-1 сейчас не загружена")
+            if entry.state is not ConfigEntryState.LOADED:
+                continue
+            coordinator = entry.runtime_data
+            docs = coordinator.data.get("documents", [])
+            doc = next(
+                (d for d in docs if str(d.get("id")) == str(document_id)), None
+            )
+            if doc is None:
+                continue
+            path = await coordinator.async_download_document(
+                document_id, doc.get("name") or f"{document_id}.pdf"
+            )
+            return {"path": path}
+        raise ServiceValidationError(f"Документ {document_id} не найден в загруженных аккаунтах ТГК-1")
 
     hass.services.async_register(
         DOMAIN,

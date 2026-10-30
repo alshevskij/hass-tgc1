@@ -35,7 +35,7 @@ class Tgc1ReadingInput(Tgc1MeterBase, RestoreNumber):
     _attr_icon = "mdi:counter"
 
     def __init__(self, coordinator: Tgc1Coordinator, dev_id: int) -> None:
-        super().__init__(coordinator, dev_id, "reading_input", "показание к отправке")
+        super().__init__(coordinator, dev_id, "reading_input", "ввод показаний")
         unit = meter_unit(self._dev.get("serviceName"))
         if unit is not None:
             self._attr_native_unit_of_measurement = unit

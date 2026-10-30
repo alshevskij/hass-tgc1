@@ -23,6 +23,15 @@ def device_info(abonent_id: Any, account_number: Any) -> DeviceInfo:
     )
 
 
+def meter_display_name(service_name: Any, title: str) -> str:
+    """Build a concise entity name, with a stable GVS prefix."""
+    service = str(service_name or "Счётчик").strip()
+    normalized = service.lower().replace("ё", "е")
+    if "гвс" in normalized or "горяч" in normalized:
+        return f"ГВС: {title}"
+    return f"{service} {title}"
+
+
 def meter_unit(service_name: Any) -> str | None:
     """Unit guessed from the service name, e.g. 'ГВС м3' -> 'm³'."""
     service = str(service_name or "").lower().replace("³", "3")
@@ -46,7 +55,7 @@ class Tgc1MeterBase(CoordinatorEntity["Tgc1Coordinator"]):
         dev = coordinator.data["devices"][dev_id]
         service = dev.get("serviceName") or "Счётчик"
         self._attr_unique_id = f"{dev_id}_{key}"
-        self._attr_name = f"{service} {title}"
+        self._attr_name = meter_display_name(service, title)
         self._attr_device_info = device_info(
             dev.get("abonentId"), dev.get("personalAccountNumber")
         )

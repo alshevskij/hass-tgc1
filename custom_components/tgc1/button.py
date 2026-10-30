@@ -4,15 +4,16 @@ from __future__ import annotations
 
 import logging
 
+from homeassistant.components import persistent_notification
 from homeassistant.components.button import ButtonEntity
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from . import Tgc1ConfigEntry, Tgc1Coordinator
 from .const import DEFAULT_MAX_INCREASE
 from .entity import Tgc1MeterBase, device_info as _device_info
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -34,6 +35,7 @@ async def async_setup_entry(
     if coordinator.data.get("accounts"):
         acc_id = next(iter(coordinator.data["accounts"]))
         entities.append(Tgc1DownloadReceiptButton(coordinator, acc_id))
+        entities.append(Tgc1SaveReceiptButton(coordinator, acc_id))
 
     async_add_entities(entities)
 
@@ -43,7 +45,7 @@ class Tgc1SubmitButton(Tgc1MeterBase, ButtonEntity):
     _attr_icon = "mdi:send"
 
     def __init__(self, coordinator: Tgc1Coordinator, dev_id: int) -> None:
-        super().__init__(coordinator, dev_id, "reading_submit", "передать показание")
+        super().__init__(coordinator, dev_id, "reading_submit", "передать показания")
 
     async def async_press(self) -> None:
         value = self.coordinator.pending_readings.get(self._dev_id)
@@ -61,11 +63,11 @@ class Tgc1SubmitButton(Tgc1MeterBase, ButtonEntity):
 
 
 class Tgc1DownloadReceiptButton(CoordinatorEntity[Tgc1Coordinator], ButtonEntity):
-    """Кнопка для скачивания последней квитанции."""
+    """Кнопка для открытия последней квитанции."""
 
     _attr_has_entity_name = True
-    _attr_name = "Скачать последнюю квитанцию"
-    _attr_icon = "mdi:file-download-outline"
+    _attr_name = "Открыть последнюю квитанцию"
+    _attr_icon = "mdi:file-pdf-box"
 
     def __init__(self, coordinator: Tgc1Coordinator, acc_id: int) -> None:
         super().__init__(coordinator)
@@ -77,35 +79,63 @@ class Tgc1DownloadReceiptButton(CoordinatorEntity[Tgc1Coordinator], ButtonEntity
         self._attr_device_info = _device_info(acc_id, acc.get("number"))
 
     async def async_press(self) -> None:
-        """Вызывается при нажатии кнопки."""
+        """Create a notification with a temporary link to the latest receipt."""
         docs = self.coordinator.data.get("documents", [])
         if not docs:
-            _LOGGER.error("Нет доступных документов для скачивания")
+            _LOGGER.warning("Нет доступных квитанций")
             return
 
-        # Берём самый свежий (API отдаёт по убыванию даты)
-        latest_doc = docs[0]
-        doc_id = latest_doc["id"]
-        filename = latest_doc["name"]
+        from . import _latest_document
 
-        _LOGGER.info("Скачиваем последнюю квитанцию: %s (%s)", filename, doc_id)
+        latest_doc = _latest_document(docs)
+        if latest_doc is None:
+            return
+        document_id = latest_doc.get("id")
+        url = self.coordinator.async_document_url(document_id)
+        persistent_notification.async_create(
+            self.hass,
+            f"Квитанция ТГК-1 за {latest_doc.get('period', 'неизвестный период')}. "
+            f'<a href="{url}" target="_blank" rel="noopener noreferrer">Открыть PDF</a>',
+            title="Квитанция ТГК-1",
+            notification_id=f"tgc1_receipt_{self.coordinator._entry_id}",
+        )
 
-        try:
-            # Вызываем метод координатора для скачивания
-            path = await self.coordinator.async_download_document(doc_id, filename)
-            _LOGGER.info("Квитанция успешно сохранена: %s", path)
-            
-            # Опционально: можно выстрелить событием, чтобы автоматизация отправила уведомление
-            self.hass.bus.async_fire(
-                "tgc1_new_document",
-                {
-                    "document_id": doc_id,
-                    "name": filename,
-                    "period": latest_doc["period"],
-                    "date": latest_doc["date"],
-                    "path": path,
-                },
+
+
+
+class Tgc1SaveReceiptButton(CoordinatorEntity[Tgc1Coordinator], ButtonEntity):
+    """Download the latest receipt to Home Assistant media storage."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Скачать последнюю квитанцию"
+    _attr_icon = "mdi:download"
+
+    def __init__(self, coordinator: Tgc1Coordinator, acc_id: int) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{acc_id}_save_receipt"
+        acc = coordinator.data["accounts"][acc_id]
+        self._attr_device_info = _device_info(acc_id, acc.get("number"))
+
+    async def async_press(self) -> None:
+        """Save the latest receipt under /media/tgc1/ on the HA host."""
+        from . import _latest_document
+
+        latest_doc = _latest_document(self.coordinator.data.get("documents", []))
+        if latest_doc is None:
+            persistent_notification.async_create(
+                self.hass,
+                "В личном кабинете ТГК-1 пока нет доступных квитанций.",
+                title="ТГК-1",
+                notification_id=f"tgc1_save_receipt_{self.coordinator._entry_id}",
             )
-        except Exception as err:
-            _LOGGER.error("Ошибка при скачивании квитанции: %s", err)
-            raise ServiceValidationError(f"Не удалось скачать квитанцию: {err}")
+            return
+
+        document_id = int(latest_doc["id"])
+        filename = latest_doc.get("name") or f"receipt-{document_id}.pdf"
+        path = await self.coordinator.async_download_document(document_id, filename)
+        persistent_notification.async_create(
+            self.hass,
+            f"Квитанция за {latest_doc.get('period', 'неизвестный период')} сохранена: `{path}`",
+            title="Квитанция ТГК-1 скачана",
+            notification_id=f"tgc1_save_receipt_{self.coordinator._entry_id}",
+        )

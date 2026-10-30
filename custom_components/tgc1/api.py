@@ -10,11 +10,11 @@ import aiohttp
 from .const import (
     CREATE_READING_URL,
     DEVICE_URL,
+    DOCUMENTS_URL,
+    DOCUMENT_FILE_URL,
     LOGIN_URL,
     REQUEST_HEADERS,
     SALDO_URL,
-    DOCUMENTS_URL,
-    DOCUMENT_FILE_URL,
 )
 
 TIMEOUT = aiohttp.ClientTimeout(total=30)
@@ -144,7 +144,27 @@ class Tgc1Client:
                         text = (await resp.text())[:300]
                         raise Tgc1RejectedError(f"HTTP {resp.status}: {text}")
                     resp.raise_for_status()
-                    return await resp.read()
+                    content_type = (
+                        resp.headers.get("Content-Type", "").split(";", 1)[0].lower()
+                    )
+                    content_length = resp.content_length
+                    max_size = 25 * 1024 * 1024
+                    if content_length is not None and content_length > max_size:
+                        raise Tgc1ApiError("PDF exceeds the 25 MiB limit")
+                    chunks: list[bytes] = []
+                    total_size = 0
+                    async for chunk in resp.content.iter_chunked(64 * 1024):
+                        total_size += len(chunk)
+                        if total_size > max_size:
+                            raise Tgc1ApiError("PDF exceeds the 25 MiB limit")
+                        chunks.append(chunk)
+                    content = b"".join(chunks)
+                    if not content.startswith(b"%PDF"):
+                        raise Tgc1ApiError(
+                            "Unexpected document response "
+                            f"(Content-Type: {content_type or 'unknown'})"
+                        )
+                    return content
             except (aiohttp.ClientError, asyncio.TimeoutError) as err:
                 raise Tgc1ApiError(f"Request failed: {err}") from err
         raise Tgc1ApiError("Request failed")
