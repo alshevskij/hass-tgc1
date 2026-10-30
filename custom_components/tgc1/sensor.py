@@ -180,13 +180,18 @@ class Tgc1BaseReceiptSensor(CoordinatorEntity[Tgc1Coordinator], SensorEntity):
         if not docs:
             return None
 
-        def parse_date(d):
+        def sort_key(document: dict[str, Any]) -> tuple[datetime, int]:
             try:
-                return datetime.strptime(d.get("date", ""), "%d.%m.%Y")
-            except Exception:
-                return datetime.min
+                parsed = datetime.strptime(document.get("date", ""), "%d.%m.%Y")
+            except (TypeError, ValueError):
+                parsed = datetime.min
+            try:
+                document_id = int(document.get("id", 0))
+            except (TypeError, ValueError):
+                document_id = 0
+            return parsed, document_id
 
-        return max(docs, key=parse_date)
+        return max(docs, key=sort_key)
 
 
 class Tgc1LastReceiptDateSensor(Tgc1BaseReceiptSensor):
