@@ -57,6 +57,10 @@
         "document_id": {
           "name": "Document ID",
           "description": "ID of the receipt (see attributes of the Last receipt sensor)."
+        },
+        "config_entry_id": {
+          "name": "Config entry ID",
+          "description": "Optional. Required when the document ID exists in multiple TGC-1 connections."
         }
       }
     }
