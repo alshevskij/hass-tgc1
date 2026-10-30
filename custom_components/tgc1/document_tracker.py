@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from typing import Any
 
 _LOGGER = logging.getLogger(__name__)
@@ -62,3 +63,15 @@ async def async_save_seen_ids(store: Any, seen_ids: set[str]) -> bool:
         )
         return False
     return True
+
+
+def process_document(
+    document_id: Any,
+    seen_ids: set[str],
+    create_notification: Callable[[], None],
+    fire_event: Callable[[], None],
+) -> None:
+    """Mark a document as seen only after notification and event processing succeed."""
+    create_notification()
+    fire_event()
+    seen_ids.add(str(document_id))
