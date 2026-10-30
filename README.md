@@ -1,5 +1,10 @@
 # Личный кабинет ПАО «ТГК-1» в твоём Home Assistant!
 
+[![HACS Custom](https://img.shields.io/badge/HACS-Custom-41BDF5.svg)](https://github.com/hacs/integration)
+[![GitHub Release](https://img.shields.io/github/v/release/alshevskij/hass-tgc1?include_prereleases&sort=semver)](https://github.com/alshevskij/hass-tgc1/releases)
+[![License](https://img.shields.io/github/license/alshevskij/hass-tgc1)](https://github.com/alshevskij/hass-tgc1/blob/main/LICENSE)
+[![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2026.3%2B-blue)](https://www.home-assistant.io/)
+
 Неофициальная интеграция для [Home Assistant](https://www.home-assistant.io/), которая позволяет получать данные из личного кабинета [lk.tgc1.ru](https://lk.tgc1.ru/) (ПАО «ТГК-1»).
 
 ## Возможности интеграции:
