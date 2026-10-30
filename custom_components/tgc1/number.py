@@ -20,9 +20,21 @@ async def async_setup_entry(
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     coordinator = entry.runtime_data
+    known_devices = set(coordinator.data["devices"])
+
     async_add_entities(
-        Tgc1ReadingInput(coordinator, dev_id) for dev_id in coordinator.data["devices"]
+        Tgc1ReadingInput(coordinator, dev_id) for dev_id in known_devices
     )
+
+    def handle_coordinator_update() -> None:
+        new_devices = set(coordinator.data["devices"]) - known_devices
+        if new_devices:
+            known_devices.update(new_devices)
+            async_add_entities(
+                Tgc1ReadingInput(coordinator, dev_id) for dev_id in new_devices
+            )
+
+    entry.async_on_unload(coordinator.async_add_listener(handle_coordinator_update))
 
 
 class Tgc1ReadingInput(Tgc1MeterBase, RestoreNumber):
