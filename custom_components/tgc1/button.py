@@ -35,6 +35,7 @@ async def async_setup_entry(
     if coordinator.data.get("accounts"):
         acc_id = next(iter(coordinator.data["accounts"]))
         entities.append(Tgc1DownloadReceiptButton(coordinator, acc_id))
+        entities.append(Tgc1SaveReceiptButton(coordinator, acc_id))
 
     async_add_entities(entities)
 
@@ -99,3 +100,42 @@ class Tgc1DownloadReceiptButton(CoordinatorEntity[Tgc1Coordinator], ButtonEntity
             notification_id=f"tgc1_receipt_{self.coordinator._entry_id}",
         )
 
+
+
+
+class Tgc1SaveReceiptButton(CoordinatorEntity[Tgc1Coordinator], ButtonEntity):
+    """Download the latest receipt to Home Assistant media storage."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Скачать последнюю квитанцию"
+    _attr_icon = "mdi:download"
+
+    def __init__(self, coordinator: Tgc1Coordinator, acc_id: int) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{acc_id}_save_receipt"
+        acc = coordinator.data["accounts"][acc_id]
+        self._attr_device_info = _device_info(acc_id, acc.get("number"))
+
+    async def async_press(self) -> None:
+        """Save the latest receipt under /media/tgc1/ on the HA host."""
+        from . import _latest_document
+
+        latest_doc = _latest_document(self.coordinator.data.get("documents", []))
+        if latest_doc is None:
+            persistent_notification.async_create(
+                self.hass,
+                "В личном кабинете ТГК-1 пока нет доступных квитанций.",
+                title="ТГК-1",
+                notification_id=f"tgc1_save_receipt_{self.coordinator._entry_id}",
+            )
+            return
+
+        document_id = int(latest_doc["id"])
+        filename = latest_doc.get("name") or f"receipt-{document_id}.pdf"
+        path = await self.coordinator.async_download_document(document_id, filename)
+        persistent_notification.async_create(
+            self.hass,
+            f"Квитанция за {latest_doc.get('period', 'неизвестный период')} сохранена: `{path}`",
+            title="Квитанция ТГК-1 скачана",
+            notification_id=f"tgc1_save_receipt_{self.coordinator._entry_id}",
+        )
