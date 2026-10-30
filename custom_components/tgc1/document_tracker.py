@@ -1,8 +1,11 @@
-"""Pure helpers for persistent receipt-notification history."""
+"""Helpers for persistent receipt-notification history."""
 
 from __future__ import annotations
 
+import logging
 from typing import Any
+
+_LOGGER = logging.getLogger(__name__)
 
 
 def restore_seen_ids(stored: Any, current_ids: set[str]) -> set[str]:
@@ -30,3 +33,32 @@ def find_new_documents(
 def serialize_seen_ids(seen_ids: set[str]) -> dict[str, Any]:
     """Serialize a bounded history, including an explicitly initialized empty one."""
     return {"initialized": True, "ids": sorted(seen_ids)[-500:]}
+
+
+async def async_load_seen_ids(store: Any, current_ids: set[str]) -> set[str]:
+    """Load history; fall back to a quiet baseline if storage is unavailable."""
+    try:
+        stored = await store.async_load()
+    except Exception:
+        _LOGGER.exception(
+            "Не удалось прочитать историю квитанций ТГК-1; "
+            "текущие документы будут приняты за исходную историю"
+        )
+        return set(current_ids)
+    return restore_seen_ids(stored, current_ids)
+
+
+async def async_save_seen_ids(store: Any, seen_ids: set[str]) -> bool:
+    """Save bounded history without failing the coordinator refresh on storage errors."""
+    bounded_ids = set(sorted(seen_ids)[-500:])
+    try:
+        await store.async_save(serialize_seen_ids(bounded_ids))
+    except Exception:
+        _LOGGER.exception(
+            "Не удалось сохранить историю квитанций ТГК-1; "
+            "уведомления могут повториться после перезапуска"
+        )
+        return False
+    seen_ids.clear()
+    seen_ids.update(bounded_ids)
+    return True
