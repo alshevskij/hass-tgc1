@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 from datetime import date, datetime, timedelta
-from http import HTTPStatus
 import logging
 import os
 from pathlib import Path
@@ -14,7 +13,7 @@ import voluptuous as vol
 from aiohttp import web
 
 from homeassistant.components import persistent_notification
-from homeassistant.components.http import HomeAssistantView
+from homeassistant.components.http import KEY_HASS, HomeAssistantView
 from homeassistant.components.http.auth import async_sign_path
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME, Platform
@@ -94,6 +93,7 @@ class Tgc1Coordinator(DataUpdateCoordinator[dict[str, Any]]):
             update_interval=timedelta(hours=UPDATE_INTERVAL_HOURS),
         )
         self.client = client
+        self._entry_id = entry.entry_id
         self._submit_lock = asyncio.Lock()
         # reading typed in the number entity, per meter id
         self.pending_readings: dict[int, float | None] = {}
@@ -131,7 +131,7 @@ class Tgc1Coordinator(DataUpdateCoordinator[dict[str, Any]]):
                         self.hass,
                         message,
                         title="Новая квитанция ТГК-1",
-                        notification_id=f"tgc1_receipt_{self.config_entry.entry_id}",
+                        notification_id=f"tgc1_receipt_{self._entry_id}",
                     )
                     event_data = {
                         "document_id": newest_id,
@@ -270,7 +270,7 @@ class Tgc1ReceiptView(HomeAssistantView):
     requires_auth = True
 
     async def get(self, request: web.Request, entry_id: str, document_id: str) -> web.Response:
-        hass = request.app["hass"]
+        hass = request.app[KEY_HASS]
         entry = hass.config_entries.async_get_entry(entry_id)
         if entry is None or entry.domain != DOMAIN or entry.state is not ConfigEntryState.LOADED:
             raise web.HTTPNotFound()
@@ -286,6 +286,9 @@ class Tgc1ReceiptView(HomeAssistantView):
             content = await coordinator.client.async_download_document(doc_id)
         except Tgc1RejectedError:
             raise web.HTTPNotFound() from None
+        except Tgc1AuthError as err:
+            _LOGGER.error("Авторизация ТГК-1 не удалась при выдаче квитанции %s: %s", doc_id, err)
+            raise web.HTTPBadGateway() from err
         except Tgc1ApiError as err:
             _LOGGER.error("Ошибка получения квитанции %s: %s", doc_id, err)
             raise web.HTTPBadGateway() from err
