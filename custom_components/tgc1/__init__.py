@@ -127,6 +127,7 @@ class Tgc1Coordinator(DataUpdateCoordinator[dict[str, Any]]):
         self._seen_document_ids: set[str] | None = None
         self._payment_store = Store(hass, 1, f"{DOMAIN}_{entry.entry_id}_payments")
         self.payment_data: dict[str, dict[str, Any]] = {}
+        self.pending_payment_amounts: dict[int, float] = {}
         self._payment_lock = asyncio.Lock()
 
     async def _async_update_data(self) -> dict[str, Any]:
