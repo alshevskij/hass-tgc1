@@ -607,7 +607,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         return matches[0]
 
     async def _handle_create_payment(call: ServiceCall) -> ServiceResponse:
-        coordinator, contract_id, account = await _get_payment_account(call)
+        coordinator, contract_id, _account = await _get_payment_account(call)
         try:
             return await coordinator.async_create_account_payment(
                 contract_id, call.data["amount"]
