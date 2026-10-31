@@ -125,6 +125,9 @@ class Tgc1Coordinator(DataUpdateCoordinator[dict[str, Any]]):
             hass, 1, f"{DOMAIN}_{entry.entry_id}_seen_documents"
         )
         self._seen_document_ids: set[str] | None = None
+        self._payment_store = Store(hass, 1, f"{DOMAIN}_{entry.entry_id}_payments")
+        self.payment_data: dict[str, dict[str, Any]] = {}
+        self._payment_lock = asyncio.Lock()
 
     async def _async_update_data(self) -> dict[str, Any]:
         try:
@@ -205,6 +208,80 @@ class Tgc1Coordinator(DataUpdateCoordinator[dict[str, Any]]):
         return async_sign_path(
             self.hass, path, timedelta(hours=24), use_content_user=True
         )
+
+    async def async_load_payment_data(self) -> None:
+        """Restore the latest payment metadata for each account."""
+        stored = await self._payment_store.async_load()
+        if isinstance(stored, dict):
+            self.payment_data = {
+                str(account_id): payment
+                for account_id, payment in stored.items()
+                if isinstance(payment, dict)
+            }
+
+    async def async_create_account_payment(
+        self, account_id: int, amount: float
+    ) -> dict[str, Any]:
+        """Create a QR payment for one account and persist its metadata."""
+        async with self._payment_lock:
+            account = self.data.get("accounts", {}).get(account_id)
+            if account is None:
+                raise ServiceValidationError("Лицевой счёт не найден в интеграции")
+            try:
+                result = await self.client.async_create_payment(account_id, amount)
+            except Tgc1RejectedError as err:
+                raise ServiceValidationError(
+                    f"ЛК отклонил создание платежа: {err}"
+                ) from err
+            except Tgc1AuthError as err:
+                raise HomeAssistantError(
+                    "Не удалось авторизоваться в личном кабинете ТГК-1"
+                ) from err
+            except Tgc1ApiError as err:
+                raise HomeAssistantError(
+                    f"Не удалось создать QR-платёж: {err}"
+                ) from err
+
+            self.payment_data[str(account_id)] = {
+                "payment_id": result["payment_id"],
+                "amount": result["amount"],
+                "payment_url": result["payment_url"],
+                "status": "pending",
+            }
+            await self._payment_store.async_save(self.payment_data)
+            self.async_set_updated_data(self.data)
+            return {**result, "account_number": account.get("number")}
+
+    async def async_check_account_payment(self, account_id: int) -> dict[str, Any]:
+        """Check the latest payment associated with an account."""
+        payment = self.payment_data.get(str(account_id))
+        if not payment:
+            raise ServiceValidationError("Для этого лицевого счёта ещё нет платежа")
+        payment_id = payment.get("payment_id")
+        if not isinstance(payment_id, int):
+            raise HomeAssistantError("Сохранённый ID платежа некорректен")
+        try:
+            paid = await self.client.async_check_payment_status(payment_id)
+        except Tgc1RejectedError as err:
+            raise ServiceValidationError(
+                f"ЛК отклонил проверку платежа: {err}"
+            ) from err
+        except Tgc1AuthError as err:
+            raise HomeAssistantError(
+                "Не удалось авторизоваться в личном кабинете ТГК-1"
+            ) from err
+        except Tgc1ApiError as err:
+            raise HomeAssistantError(
+                f"Не удалось проверить статус платежа: {err}"
+            ) from err
+
+        payment["status"] = "paid" if paid else "pending"
+        await self._payment_store.async_save(self.payment_data)
+        if paid:
+            await self.async_refresh()
+        else:
+            self.async_set_updated_data(self.data)
+        return {"payment_id": payment_id, "paid": paid}
 
     async def async_download_document(self, document_id: int, filename: str) -> str:
         """Скачивает PDF квитанции в /media/tgc1/ и возвращает путь."""
@@ -531,10 +608,9 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     async def _handle_create_payment(call: ServiceCall) -> ServiceResponse:
         coordinator, contract_id, account = await _get_payment_account(call)
         try:
-            result = await coordinator.client.async_create_payment(
+            return await coordinator.async_create_account_payment(
                 contract_id, call.data["amount"]
             )
-            return {**result, "account_number": account.get("number")}
         except Tgc1RejectedError as err:
             raise ServiceValidationError(f"ЛК отклонил создание платежа: {err}") from err
         except Tgc1AuthError as err:
@@ -607,6 +683,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: Tgc1ConfigEntry) -> bool
     )
     coordinator = Tgc1Coordinator(hass, entry, client)
     await coordinator.async_config_entry_first_refresh()
+    await coordinator.async_load_payment_data()
     entry.runtime_data = coordinator
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
