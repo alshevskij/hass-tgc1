@@ -6,7 +6,6 @@ from homeassistant.components.number import (
     NumberDeviceClass,
     NumberMode,
     RestoreNumber,
-    NumberDeviceClass,
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -22,6 +21,7 @@ async def async_setup_entry(
 ) -> None:
     coordinator = entry.runtime_data
     known_devices = set(coordinator.data["devices"])
+    known_accounts = set(coordinator.data["accounts"])
 
     async_add_entities(
         Tgc1ReadingInput(coordinator, dev_id) for dev_id in known_devices
@@ -36,9 +36,20 @@ async def async_setup_entry(
             )
 
     async_add_entities(
-        Tgc1PaymentAmountInput(coordinator, acc_id)
-        for acc_id in coordinator.data["accounts"]
+        Tgc1PaymentAmountInput(coordinator, acc_id) for acc_id in known_accounts
     )
+
+    previous_handle_coordinator_update = handle_coordinator_update
+
+    def handle_coordinator_update() -> None:
+        previous_handle_coordinator_update()
+        new_accounts = set(coordinator.data["accounts"]) - known_accounts
+        if new_accounts:
+            known_accounts.update(new_accounts)
+            async_add_entities(
+                Tgc1PaymentAmountInput(coordinator, acc_id)
+                for acc_id in new_accounts
+            )
 
     entry.async_on_unload(coordinator.async_add_listener(handle_coordinator_update))
 
