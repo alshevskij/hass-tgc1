@@ -129,6 +129,8 @@ class Tgc1PaymentAmountInput(RestoreNumber):
                 )
             except (TypeError, ValueError):
                 self._value = 0.01
+        if self._value is not None:
+            self.coordinator.pending_payment_amounts[self._acc_id] = self._value
         self.async_write_ha_state()
 
     @property
@@ -137,4 +139,5 @@ class Tgc1PaymentAmountInput(RestoreNumber):
 
     async def async_set_native_value(self, value: float) -> None:
         self._value = round(value, 2)
+        self.coordinator.pending_payment_amounts[self._acc_id] = self._value
         self.async_write_ha_state()
