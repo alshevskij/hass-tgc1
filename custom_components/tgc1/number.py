@@ -26,6 +26,9 @@ async def async_setup_entry(
     async_add_entities(
         Tgc1ReadingInput(coordinator, dev_id) for dev_id in known_devices
     )
+    async_add_entities(
+        Tgc1PaymentAmountInput(coordinator, acc_id) for acc_id in known_accounts
+    )
 
     def handle_coordinator_update() -> None:
         new_devices = set(coordinator.data["devices"]) - known_devices
