@@ -46,6 +46,8 @@ from .const import (
     DOMAIN,
     MEDIA_DIR,
     SERVICE_DOWNLOAD_DOCUMENT,
+    SERVICE_CREATE_PAYMENT,
+    SERVICE_CHECK_PAYMENT,
     SERVICE_SUBMIT_READING,
     UPDATE_INTERVAL_HOURS,
 )
@@ -68,6 +70,21 @@ SUBMIT_READING_SCHEMA = vol.Schema(
             vol.Coerce(float), vol.Range(min=0)
         ),
         vol.Optional("dry_run", default=False): cv.boolean,
+    }
+)
+
+CREATE_PAYMENT_SCHEMA = vol.Schema(
+    {
+        vol.Required("account_number"): vol.All(cv.string, vol.Length(min=1)),
+        vol.Required("amount"): vol.All(vol.Coerce(float), vol.Range(min=0.01)),
+        vol.Optional("config_entry_id"): cv.string,
+    }
+)
+
+CHECK_PAYMENT_SCHEMA = vol.Schema(
+    {
+        vol.Required("payment_id"): vol.All(vol.Coerce(int), vol.Range(min=1)),
+        vol.Optional("config_entry_id"): cv.string,
     }
 )
 
@@ -108,6 +125,10 @@ class Tgc1Coordinator(DataUpdateCoordinator[dict[str, Any]]):
             hass, 1, f"{DOMAIN}_{entry.entry_id}_seen_documents"
         )
         self._seen_document_ids: set[str] | None = None
+        self._payment_store = Store(hass, 1, f"{DOMAIN}_{entry.entry_id}_payments")
+        self.payment_data: dict[str, dict[str, Any]] = {}
+        self.pending_payment_amounts: dict[int, float] = {}
+        self._payment_lock = asyncio.Lock()
 
     async def _async_update_data(self) -> dict[str, Any]:
         try:
@@ -188,6 +209,80 @@ class Tgc1Coordinator(DataUpdateCoordinator[dict[str, Any]]):
         return async_sign_path(
             self.hass, path, timedelta(hours=24), use_content_user=True
         )
+
+    async def async_load_payment_data(self) -> None:
+        """Restore the latest payment metadata for each account."""
+        stored = await self._payment_store.async_load()
+        if isinstance(stored, dict):
+            self.payment_data = {
+                str(account_id): payment
+                for account_id, payment in stored.items()
+                if isinstance(payment, dict)
+            }
+
+    async def async_create_account_payment(
+        self, account_id: int, amount: float
+    ) -> dict[str, Any]:
+        """Create a QR payment for one account and persist its metadata."""
+        async with self._payment_lock:
+            account = self.data.get("accounts", {}).get(account_id)
+            if account is None:
+                raise ServiceValidationError("Лицевой счёт не найден в интеграции")
+            try:
+                result = await self.client.async_create_payment(account_id, amount)
+            except Tgc1RejectedError as err:
+                raise ServiceValidationError(
+                    f"ЛК отклонил создание платежа: {err}"
+                ) from err
+            except Tgc1AuthError as err:
+                raise HomeAssistantError(
+                    "Не удалось авторизоваться в личном кабинете ТГК-1"
+                ) from err
+            except Tgc1ApiError as err:
+                raise HomeAssistantError(
+                    f"Не удалось создать QR-платёж: {err}"
+                ) from err
+
+            self.payment_data[str(account_id)] = {
+                "payment_id": result["payment_id"],
+                "amount": result["amount"],
+                "payment_url": result["payment_url"],
+                "status": "pending",
+            }
+            await self._payment_store.async_save(self.payment_data)
+            self.async_set_updated_data(self.data)
+            return {**result, "account_number": account.get("number")}
+
+    async def async_check_account_payment(self, account_id: int) -> dict[str, Any]:
+        """Check the latest payment associated with an account."""
+        payment = self.payment_data.get(str(account_id))
+        if not payment:
+            raise ServiceValidationError("Для этого лицевого счёта ещё нет платежа")
+        payment_id = payment.get("payment_id")
+        if not isinstance(payment_id, int):
+            raise HomeAssistantError("Сохранённый ID платежа некорректен")
+        try:
+            paid = await self.client.async_check_payment_status(payment_id)
+        except Tgc1RejectedError as err:
+            raise ServiceValidationError(
+                f"ЛК отклонил проверку платежа: {err}"
+            ) from err
+        except Tgc1AuthError as err:
+            raise HomeAssistantError(
+                "Не удалось авторизоваться в личном кабинете ТГК-1"
+            ) from err
+        except Tgc1ApiError as err:
+            raise HomeAssistantError(
+                f"Не удалось проверить статус платежа: {err}"
+            ) from err
+
+        payment["status"] = "paid" if paid else "pending"
+        await self._payment_store.async_save(self.payment_data)
+        if paid:
+            await self.async_refresh()
+        else:
+            self.async_set_updated_data(self.data)
+        return {"payment_id": payment_id, "paid": paid}
 
     async def async_download_document(self, document_id: int, filename: str) -> str:
         """Скачивает PDF квитанции в /media/tgc1/ и возвращает путь."""
@@ -464,6 +559,111 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         )
         return {"path": path}
 
+
+    async def _get_payment_coordinator(call: ServiceCall) -> Tgc1Coordinator:
+        """Select the loaded integration entry for payment status checks."""
+        requested_entry_id = call.data.get("config_entry_id")
+        entries = [
+            entry for entry in hass.config_entries.async_entries(DOMAIN)
+            if entry.state is ConfigEntryState.LOADED
+            and (not requested_entry_id or entry.entry_id == requested_entry_id)
+        ]
+        if not entries:
+            raise ServiceValidationError("Нет загруженной интеграции ТГК-1")
+        if len(entries) > 1:
+            raise ServiceValidationError(
+                "Найдено несколько подключений ТГК-1. Укажи config_entry_id."
+            )
+        return entries[0].runtime_data
+
+    async def _get_payment_account(
+        call: ServiceCall,
+    ) -> tuple[Tgc1Coordinator, int, dict[str, Any]]:
+        """Resolve the user-facing account number to the API contract ID."""
+        requested_entry_id = call.data.get("config_entry_id")
+        account_number = call.data["account_number"].strip()
+        matches: list[tuple[Tgc1Coordinator, int, dict[str, Any]]] = []
+
+        for entry in hass.config_entries.async_entries(DOMAIN):
+            if entry.state is not ConfigEntryState.LOADED:
+                continue
+            if requested_entry_id and entry.entry_id != requested_entry_id:
+                continue
+            coordinator = entry.runtime_data
+            for contract_id, account in coordinator.data.get("accounts", {}).items():
+                if str(account.get("number", "")).strip() == account_number:
+                    matches.append((coordinator, int(contract_id), account))
+
+        if not matches:
+            raise ServiceValidationError(
+                "Лицевой счёт не найден среди загруженных данных ТГК-1. "
+                "Проверь номер или обнови интеграцию."
+            )
+        if len(matches) > 1:
+            raise ServiceValidationError(
+                "Этот номер лицевого счёта найден в нескольких подключениях. "
+                "Укажи config_entry_id."
+            )
+        return matches[0]
+
+    async def _handle_create_payment(call: ServiceCall) -> ServiceResponse:
+        coordinator, contract_id, _account = await _get_payment_account(call)
+        try:
+            return await coordinator.async_create_account_payment(
+                contract_id, call.data["amount"]
+            )
+        except Tgc1RejectedError as err:
+            raise ServiceValidationError(f"ЛК отклонил создание платежа: {err}") from err
+        except Tgc1AuthError as err:
+            raise HomeAssistantError("Не удалось авторизоваться в ЛК ТГК-1") from err
+        except Tgc1ApiError as err:
+            raise HomeAssistantError(f"Не удалось создать QR-платёж: {err}") from err
+
+    async def _handle_check_payment(call: ServiceCall) -> ServiceResponse:
+        coordinator = await _get_payment_coordinator(call)
+        try:
+            paid = await coordinator.client.async_check_payment_status(
+                call.data["payment_id"]
+            )
+        except Tgc1RejectedError as err:
+            raise ServiceValidationError(f"ЛК отклонил проверку платежа: {err}") from err
+        except Tgc1AuthError as err:
+            raise HomeAssistantError("Не удалось авторизоваться в ЛК ТГК-1") from err
+        except Tgc1ApiError as err:
+            raise HomeAssistantError(f"Не удалось проверить статус платежа: {err}") from err
+
+        for payment in coordinator.payment_data.values():
+            if payment.get("payment_id") == call.data["payment_id"]:
+                payment["status"] = "paid" if paid else "pending"
+                await coordinator._payment_store.async_save(coordinator.payment_data)
+                break
+
+        if paid:
+            await coordinator.async_refresh()
+        else:
+            coordinator.async_set_updated_data(coordinator.data)
+        return {
+            "payment_id": call.data["payment_id"],
+            "paid": paid,
+            "status": "paid" if paid else "pending",
+            "balance_refreshed": bool(paid and coordinator.last_update_success),
+        }
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_CREATE_PAYMENT,
+        _handle_create_payment,
+        schema=CREATE_PAYMENT_SCHEMA,
+        supports_response=SupportsResponse.OPTIONAL,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_CHECK_PAYMENT,
+        _handle_check_payment,
+        schema=CHECK_PAYMENT_SCHEMA,
+        supports_response=SupportsResponse.OPTIONAL,
+    )
+
     hass.services.async_register(
         DOMAIN,
         SERVICE_SUBMIT_READING,
@@ -492,6 +692,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: Tgc1ConfigEntry) -> bool
     )
     coordinator = Tgc1Coordinator(hass, entry, client)
     await coordinator.async_config_entry_first_refresh()
+    await coordinator.async_load_payment_data()
     entry.runtime_data = coordinator
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
