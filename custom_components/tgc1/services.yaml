@@ -63,15 +63,12 @@ create_payment:
   name: Создать QR-платёж
   description: Создаёт QR-код для оплаты через СБП. Сам платёж не выполняется.
   fields:
-    contract_id:
-      name: ID договора
-      description: ID договора (contract) из личного кабинета ТГК-1.
+    account_number:
+      name: Номер лицевого счёта
+      description: Номер из личного кабинета или квитанции. Внутренний ID договора интеграция определит автоматически.
       required: true
       selector:
-        number:
-          min: 1
-          step: 1
-          mode: box
+        text:
     amount:
       name: Сумма
       description: Сумма платежа в рублях, не более двух знаков после запятой.
