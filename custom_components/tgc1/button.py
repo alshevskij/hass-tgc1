@@ -55,6 +55,7 @@ async def async_setup_entry(
         for acc_id in known_payment_accounts
         for entity in (
             Tgc1CreatePaymentButton(coordinator, acc_id),
+            Tgc1OpenPaymentButton(coordinator, acc_id),
             Tgc1CheckPaymentButton(coordinator, acc_id),
         )
     )
@@ -123,6 +124,51 @@ class Tgc1CreatePaymentButton(
             f'<a href="{result["payment_url"]}" target="_blank" rel="noopener noreferrer">'
             "Открыть страницу оплаты</a>.",
             title="ТГК-1: QR-платёж создан",
+            notification_id=f"tgc1_payment_{self.coordinator._entry_id}_{self._acc_id}",
+        )
+
+
+class Tgc1OpenPaymentButton(
+    CoordinatorEntity[Tgc1Coordinator], ButtonEntity
+):
+    """Recreate a notification containing the latest payment link."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Открыть страницу оплаты"
+    _attr_icon = "mdi:open-in-new"
+
+    def __init__(self, coordinator: Tgc1Coordinator, acc_id: int) -> None:
+        super().__init__(coordinator)
+        self._acc_id = acc_id
+        self._attr_unique_id = f"{acc_id}_open_payment"
+        account = coordinator.data["accounts"][acc_id]
+        self._attr_device_info = _device_info(acc_id, account.get("number"))
+
+    @property
+    def available(self) -> bool:
+        return (
+            super().available
+            and bool(
+                self.coordinator.payment_data.get(str(self._acc_id), {}).get(
+                    "payment_url"
+                )
+            )
+        )
+
+    async def async_press(self) -> None:
+        payment = self.coordinator.payment_data.get(str(self._acc_id), {})
+        payment_url = payment.get("payment_url")
+        if not isinstance(payment_url, str):
+            raise ServiceValidationError(
+                "Для этого лицевого счёта ещё нет ссылки на оплату"
+            )
+        persistent_notification.async_create(
+            self.hass,
+            f"Открой страницу оплаты последнего платежа "
+            f"на {float(payment.get('amount', 0)):.2f} ₽: "
+            f'<a href="{payment_url}" target="_blank" rel="noopener noreferrer">'
+            "Перейти к оплате</a>.",
+            title="ТГК-1: ссылка на оплату",
             notification_id=f"tgc1_payment_{self.coordinator._entry_id}_{self._acc_id}",
         )
 
