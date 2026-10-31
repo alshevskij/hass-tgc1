@@ -6,12 +6,13 @@ from homeassistant.components.number import (
     NumberDeviceClass,
     NumberMode,
     RestoreNumber,
+    NumberDeviceClass,
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import Tgc1ConfigEntry, Tgc1Coordinator
-from .entity import Tgc1MeterBase, meter_unit
+from .entity import Tgc1MeterBase, meter_unit, device_info as _device_info
 
 
 async def async_setup_entry(
@@ -33,6 +34,11 @@ async def async_setup_entry(
             async_add_entities(
                 Tgc1ReadingInput(coordinator, dev_id) for dev_id in new_devices
             )
+
+    async_add_entities(
+        Tgc1PaymentAmountInput(coordinator, acc_id)
+        for acc_id in coordinator.data["accounts"]
+    )
 
     entry.async_on_unload(coordinator.async_add_listener(handle_coordinator_update))
 
@@ -72,4 +78,52 @@ class Tgc1ReadingInput(Tgc1MeterBase, RestoreNumber):
 
     async def async_set_native_value(self, value: float) -> None:
         self.coordinator.pending_readings[self._dev_id] = value
+        self.async_write_ha_state()
+
+
+
+class Tgc1PaymentAmountInput(RestoreNumber):
+    """Amount to use when creating an SBP payment for this account."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Сумма платежа"
+    _attr_icon = "mdi:cash-plus"
+    _attr_device_class = NumberDeviceClass.MONETARY
+    _attr_native_unit_of_measurement = "RUB"
+    _attr_mode = NumberMode.BOX
+    _attr_native_min_value = 0.01
+    _attr_native_max_value = 1000000
+    _attr_native_step = 0.01
+
+    def __init__(self, coordinator: Tgc1Coordinator, acc_id: int) -> None:
+        super().__init__()
+        self.coordinator = coordinator
+        self._acc_id = acc_id
+        self._attr_unique_id = f"{acc_id}_payment_amount_input"
+        account = coordinator.data["accounts"][acc_id]
+        self._attr_device_info = _device_info(acc_id, account.get("number"))
+        self._value: float | None = None
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        restored = await self.async_get_last_number_data()
+        if restored is not None and restored.native_value is not None:
+            self._value = restored.native_value
+        else:
+            account = self.coordinator.data["accounts"].get(self._acc_id, {})
+            try:
+                self._value = max(
+                    0.01,
+                    float(account.get("debtWithPayment") or account.get("debt") or 0),
+                )
+            except (TypeError, ValueError):
+                self._value = 0.01
+        self.async_write_ha_state()
+
+    @property
+    def native_value(self) -> float | None:
+        return self._value
+
+    async def async_set_native_value(self, value: float) -> None:
+        self._value = round(value, 2)
         self.async_write_ha_state()
