@@ -482,6 +482,22 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         return {"path": path}
 
 
+    async def _get_payment_coordinator(call: ServiceCall) -> Tgc1Coordinator:
+        """Select the loaded integration entry for payment status checks."""
+        requested_entry_id = call.data.get("config_entry_id")
+        entries = [
+            entry for entry in hass.config_entries.async_entries(DOMAIN)
+            if entry.state is ConfigEntryState.LOADED
+            and (not requested_entry_id or entry.entry_id == requested_entry_id)
+        ]
+        if not entries:
+            raise ServiceValidationError("Нет загруженной интеграции ТГК-1")
+        if len(entries) > 1:
+            raise ServiceValidationError(
+                "Найдено несколько подключений ТГК-1. Укажи config_entry_id."
+            )
+        return entries[0].runtime_data
+
     async def _get_payment_account(
         call: ServiceCall,
     ) -> tuple[Tgc1Coordinator, int, dict[str, Any]]:
