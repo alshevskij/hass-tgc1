@@ -632,8 +632,16 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         except Tgc1ApiError as err:
             raise HomeAssistantError(f"Не удалось проверить статус платежа: {err}") from err
 
+        for payment in coordinator.payment_data.values():
+            if payment.get("payment_id") == call.data["payment_id"]:
+                payment["status"] = "paid" if paid else "pending"
+                await coordinator._payment_store.async_save(coordinator.payment_data)
+                break
+
         if paid:
             await coordinator.async_refresh()
+        else:
+            coordinator.async_set_updated_data(coordinator.data)
         return {
             "payment_id": call.data["payment_id"],
             "paid": paid,
