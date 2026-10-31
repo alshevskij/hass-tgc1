@@ -46,6 +46,8 @@ from .const import (
     DOMAIN,
     MEDIA_DIR,
     SERVICE_DOWNLOAD_DOCUMENT,
+    SERVICE_CREATE_PAYMENT,
+    SERVICE_CHECK_PAYMENT,
     SERVICE_SUBMIT_READING,
     UPDATE_INTERVAL_HOURS,
 )
@@ -68,6 +70,21 @@ SUBMIT_READING_SCHEMA = vol.Schema(
             vol.Coerce(float), vol.Range(min=0)
         ),
         vol.Optional("dry_run", default=False): cv.boolean,
+    }
+)
+
+CREATE_PAYMENT_SCHEMA = vol.Schema(
+    {
+        vol.Required("contract_id"): vol.All(vol.Coerce(int), vol.Range(min=1)),
+        vol.Required("amount"): vol.All(vol.Coerce(float), vol.Range(min=0.01)),
+        vol.Optional("config_entry_id"): cv.string,
+    }
+)
+
+CHECK_PAYMENT_SCHEMA = vol.Schema(
+    {
+        vol.Required("payment_id"): vol.All(vol.Coerce(int), vol.Range(min=1)),
+        vol.Optional("config_entry_id"): cv.string,
     }
 )
 
@@ -463,6 +480,72 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
             document_id, doc.get("name") or f"{document_id}.pdf"
         )
         return {"path": path}
+
+
+    async def _get_payment_coordinator(call: ServiceCall) -> Tgc1Coordinator:
+        requested_entry_id = call.data.get("config_entry_id")
+        entries = [
+            entry for entry in hass.config_entries.async_entries(DOMAIN)
+            if entry.state is ConfigEntryState.LOADED
+            and (not requested_entry_id or entry.entry_id == requested_entry_id)
+        ]
+        if not entries:
+            raise ServiceValidationError("Нет загруженной интеграции ТГК-1")
+        if len(entries) > 1:
+            raise ServiceValidationError(
+                "Найдено несколько подключений ТГК-1. Укажи config_entry_id."
+            )
+        return entries[0].runtime_data
+
+    async def _handle_create_payment(call: ServiceCall) -> ServiceResponse:
+        coordinator = await _get_payment_coordinator(call)
+        try:
+            return await coordinator.client.async_create_payment(
+                call.data["contract_id"], call.data["amount"]
+            )
+        except Tgc1RejectedError as err:
+            raise ServiceValidationError(f"ЛК отклонил создание платежа: {err}") from err
+        except Tgc1AuthError as err:
+            raise HomeAssistantError("Не удалось авторизоваться в ЛК ТГК-1") from err
+        except Tgc1ApiError as err:
+            raise HomeAssistantError(f"Не удалось создать QR-платёж: {err}") from err
+
+    async def _handle_check_payment(call: ServiceCall) -> ServiceResponse:
+        coordinator = await _get_payment_coordinator(call)
+        try:
+            paid = await coordinator.client.async_check_payment_status(
+                call.data["payment_id"]
+            )
+        except Tgc1RejectedError as err:
+            raise ServiceValidationError(f"ЛК отклонил проверку платежа: {err}") from err
+        except Tgc1AuthError as err:
+            raise HomeAssistantError("Не удалось авторизоваться в ЛК ТГК-1") from err
+        except Tgc1ApiError as err:
+            raise HomeAssistantError(f"Не удалось проверить статус платежа: {err}") from err
+
+        if paid:
+            await coordinator.async_refresh()
+        return {
+            "payment_id": call.data["payment_id"],
+            "paid": paid,
+            "status": "paid" if paid else "pending",
+            "balance_refreshed": bool(paid and coordinator.last_update_success),
+        }
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_CREATE_PAYMENT,
+        _handle_create_payment,
+        schema=CREATE_PAYMENT_SCHEMA,
+        supports_response=SupportsResponse.OPTIONAL,
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_CHECK_PAYMENT,
+        _handle_check_payment,
+        schema=CHECK_PAYMENT_SCHEMA,
+        supports_response=SupportsResponse.OPTIONAL,
+    )
 
     hass.services.async_register(
         DOMAIN,
