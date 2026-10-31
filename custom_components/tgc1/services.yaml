@@ -59,3 +59,52 @@ download_document:
       required: false
       selector:
         text:
+create_payment:
+  name: Создать QR-платёж
+  description: Создаёт QR-код для оплаты через СБП. Сам платёж не выполняется.
+  fields:
+    contract_id:
+      name: ID договора
+      description: ID договора (contract) из личного кабинета ТГК-1.
+      required: true
+      selector:
+        number:
+          min: 1
+          step: 1
+          mode: box
+    amount:
+      name: Сумма
+      description: Сумма платежа в рублях, не более двух знаков после запятой.
+      required: true
+      example: 1.00
+      selector:
+        number:
+          min: 0.01
+          step: 0.01
+          mode: box
+    config_entry_id:
+      name: ID записи интеграции
+      description: Укажи, если настроено несколько подключений ТГК-1.
+      required: false
+      selector:
+        text:
+
+check_payment:
+  name: Проверить QR-платёж
+  description: Проверяет статус платежа; при успешной оплате обновляет данные интеграции.
+  fields:
+    payment_id:
+      name: ID платежа
+      description: ID, полученный от сервиса «Создать QR-платёж».
+      required: true
+      selector:
+        number:
+          min: 1
+          step: 1
+          mode: box
+    config_entry_id:
+      name: ID записи интеграции
+      description: Укажи, если настроено несколько подключений ТГК-1.
+      required: false
+      selector:
+        text:
