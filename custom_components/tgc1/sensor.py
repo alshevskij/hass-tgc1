@@ -231,7 +231,6 @@ class Tgc1ContractIdSensor(Tgc1AccountSensor):
 
     _attr_name = "ID договора"
     _attr_icon = "mdi:identifier"
-    _attr_entity_category = "diagnostic"
 
     def __init__(self, coordinator: Tgc1Coordinator, acc_id: int) -> None:
         super().__init__(coordinator, acc_id)
