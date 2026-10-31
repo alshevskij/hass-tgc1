@@ -49,6 +49,16 @@ async def async_setup_entry(
 
     add_receipt_buttons()
 
+    known_payment_accounts = set(coordinator.data.get("accounts", {}))
+    async_add_entities(
+        entity
+        for acc_id in known_payment_accounts
+        for entity in (
+            Tgc1CreatePaymentButton(coordinator, acc_id),
+            Tgc1CheckPaymentButton(coordinator, acc_id),
+        )
+    )
+
     def handle_coordinator_update() -> None:
         new_devices = set(coordinator.data["devices"]) - known_devices
         if new_devices:
@@ -57,8 +67,107 @@ async def async_setup_entry(
                 Tgc1SubmitButton(coordinator, dev_id) for dev_id in new_devices
             )
         add_receipt_buttons()
+        new_accounts = set(coordinator.data.get("accounts", {})) - known_payment_accounts
+        if new_accounts:
+            known_payment_accounts.update(new_accounts)
+            async_add_entities(
+                entity
+                for acc_id in new_accounts
+                for entity in (
+                    Tgc1CreatePaymentButton(coordinator, acc_id),
+                    Tgc1CheckPaymentButton(coordinator, acc_id),
+                )
+            )
 
     entry.async_on_unload(coordinator.async_add_listener(handle_coordinator_update))
+
+
+class Tgc1CreatePaymentButton(
+    CoordinatorEntity[Tgc1Coordinator], ButtonEntity
+):
+    """Create an SBP QR payment for this personal account."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Создать QR-платёж"
+    _attr_icon = "mdi:qrcode"
+
+    def __init__(self, coordinator: Tgc1Coordinator, acc_id: int) -> None:
+        super().__init__(coordinator)
+        self._acc_id = acc_id
+        self._attr_unique_id = f"{acc_id}_create_payment"
+        account = coordinator.data["accounts"][acc_id]
+        self._attr_device_info = _device_info(acc_id, account.get("number"))
+
+    async def async_press(self) -> None:
+        account = self.coordinator.data["accounts"].get(self._acc_id, {})
+        amount = self.coordinator.pending_payment_amounts.get(self._acc_id)
+        if amount is None:
+            try:
+                amount = float(
+                    account.get("debtWithPayment") or account.get("debt") or 0
+                )
+            except (TypeError, ValueError):
+                amount = 0
+        if amount < 0.01:
+            raise ServiceValidationError(
+                "Укажи сумму не менее 0,01 ₽ в поле «Сумма платежа»"
+            )
+
+        result = await self.coordinator.async_create_account_payment(
+            self._acc_id, amount
+        )
+        persistent_notification.async_create(
+            self.hass,
+            f"Создан QR-платёж на {result['amount']:.2f} ₽ для лицевого счёта "
+            f"{result.get('account_number') or self._acc_id}. "
+            f'<a href="{result["payment_url"]}" target="_blank" rel="noopener noreferrer">'
+            "Открыть страницу оплаты</a>.",
+            title="ТГК-1: QR-платёж создан",
+            notification_id=f"tgc1_payment_{self.coordinator._entry_id}_{self._acc_id}",
+        )
+
+
+class Tgc1CheckPaymentButton(
+    CoordinatorEntity[Tgc1Coordinator], ButtonEntity
+):
+    """Check the latest SBP payment for this personal account."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Проверить оплату"
+    _attr_icon = "mdi:cash-sync"
+
+    def __init__(self, coordinator: Tgc1Coordinator, acc_id: int) -> None:
+        super().__init__(coordinator)
+        self._acc_id = acc_id
+        self._attr_unique_id = f"{acc_id}_check_payment"
+        account = coordinator.data["accounts"][acc_id]
+        self._attr_device_info = _device_info(acc_id, account.get("number"))
+
+    @property
+    def available(self) -> bool:
+        return (
+            super().available
+            and self._acc_id in self.coordinator.data.get("accounts", {})
+            and bool(self.coordinator.payment_data.get(str(self._acc_id), {}).get("payment_id"))
+        )
+
+    async def async_press(self) -> None:
+        result = await self.coordinator.async_check_account_payment(self._acc_id)
+        if result["paid"]:
+            message = "Платёж подтверждён. Данные задолженности обновлены."
+            title = "ТГК-1: платёж оплачен"
+        else:
+            message = (
+                "ЛК ТГК-1 пока не подтвердил платёж. "
+                "Если ты уже оплатил, попробуй проверить статус позднее."
+            )
+            title = "ТГК-1: ожидается подтверждение"
+        persistent_notification.async_create(
+            self.hass,
+            message,
+            title=title,
+            notification_id=f"tgc1_payment_status_{self.coordinator._entry_id}_{self._acc_id}",
+        )
 
 
 class Tgc1SubmitButton(Tgc1MeterBase, ButtonEntity):
