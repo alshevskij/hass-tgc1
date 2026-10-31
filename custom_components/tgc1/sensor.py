@@ -58,7 +58,16 @@ async def async_setup_entry(
             if acc_id in known_accounts:
                 continue
             known_accounts.add(acc_id)
-            entities.append(Tgc1DebtSensor(coordinator, acc_id))
+            entities.extend(
+                (
+                    Tgc1DebtSensor(coordinator, acc_id),
+                    Tgc1ContractIdSensor(coordinator, acc_id),
+                    Tgc1PaymentIdSensor(coordinator, acc_id),
+                    Tgc1PaymentStatusSensor(coordinator, acc_id),
+                    Tgc1PaymentAmountSensor(coordinator, acc_id),
+                    Tgc1PaymentUrlSensor(coordinator, acc_id),
+                )
+            )
         return entities
 
     async_add_entities(
@@ -191,6 +200,113 @@ class Tgc1DebtSensor(CoordinatorEntity[Tgc1Coordinator], SensorEntity):
             "exist_recurrent": self._acc.get("existRecurrent"),
             "status": self._acc.get("status"),
         }
+
+
+class Tgc1AccountSensor(CoordinatorEntity[Tgc1Coordinator], SensorEntity):
+    """Base class for account-specific payment sensors."""
+
+    _attr_has_entity_name = True
+
+    def __init__(self, coordinator: Tgc1Coordinator, acc_id: int) -> None:
+        super().__init__(coordinator)
+        self._acc_id = acc_id
+        account = coordinator.data["accounts"][acc_id]
+        self._attr_device_info = _device_info(acc_id, account.get("number"))
+
+    @property
+    def _acc(self) -> dict[str, Any]:
+        return self.coordinator.data.get("accounts", {}).get(self._acc_id, {})
+
+    @property
+    def _payment(self) -> dict[str, Any]:
+        return self.coordinator.payment_data.get(str(self._acc_id), {})
+
+    @property
+    def available(self) -> bool:
+        return super().available and self._acc_id in self.coordinator.data.get("accounts", {})
+
+
+class Tgc1ContractIdSensor(Tgc1AccountSensor):
+    """Internal contract ID used by the TGC-1 payment API."""
+
+    _attr_name = "ID договора"
+    _attr_icon = "mdi:identifier"
+    _attr_entity_category = "diagnostic"
+
+    def __init__(self, coordinator: Tgc1Coordinator, acc_id: int) -> None:
+        super().__init__(coordinator, acc_id)
+        self._attr_unique_id = f"{acc_id}_contract_id"
+
+    @property
+    def native_value(self) -> int:
+        return self._acc_id
+
+
+class Tgc1PaymentIdSensor(Tgc1AccountSensor):
+    """ID of the latest SBP payment."""
+
+    _attr_name = "ID последнего платежа"
+    _attr_icon = "mdi:receipt-text-outline"
+    _attr_entity_category = "diagnostic"
+
+    def __init__(self, coordinator: Tgc1Coordinator, acc_id: int) -> None:
+        super().__init__(coordinator, acc_id)
+        self._attr_unique_id = f"{acc_id}_payment_id"
+
+    @property
+    def native_value(self) -> int | None:
+        value = self._payment.get("payment_id")
+        return value if isinstance(value, int) else None
+
+
+class Tgc1PaymentStatusSensor(Tgc1AccountSensor):
+    """Status of the latest SBP payment."""
+
+    _attr_name = "Статус последнего платежа"
+    _attr_icon = "mdi:cash-check"
+
+    def __init__(self, coordinator: Tgc1Coordinator, acc_id: int) -> None:
+        super().__init__(coordinator, acc_id)
+        self._attr_unique_id = f"{acc_id}_payment_status"
+
+    @property
+    def native_value(self) -> str:
+        status = self._payment.get("status")
+        return {"paid": "Оплачен", "pending": "Ожидает подтверждения"}.get(
+            status, "Платёж не создан"
+        )
+
+
+class Tgc1PaymentAmountSensor(Tgc1AccountSensor):
+    """Amount of the latest SBP payment."""
+
+    _attr_name = "Сумма последнего платежа"
+    _attr_device_class = SensorDeviceClass.MONETARY
+    _attr_native_unit_of_measurement = "RUB"
+
+    def __init__(self, coordinator: Tgc1Coordinator, acc_id: int) -> None:
+        super().__init__(coordinator, acc_id)
+        self._attr_unique_id = f"{acc_id}_payment_amount"
+
+    @property
+    def native_value(self) -> float | None:
+        return _to_float(self._payment.get("amount"))
+
+
+class Tgc1PaymentUrlSensor(Tgc1AccountSensor):
+    """Payment URL for the latest SBP payment."""
+
+    _attr_name = "Ссылка на оплату"
+    _attr_icon = "mdi:link"
+
+    def __init__(self, coordinator: Tgc1Coordinator, acc_id: int) -> None:
+        super().__init__(coordinator, acc_id)
+        self._attr_unique_id = f"{acc_id}_payment_url"
+
+    @property
+    def native_value(self) -> str | None:
+        value = self._payment.get("payment_url")
+        return value if isinstance(value, str) else None
 
 
 # Базовый класс для сенсоров квитанций, чтобы не дублировать код привязки к устройству
