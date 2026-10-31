@@ -181,7 +181,16 @@ class Tgc1DebtSensor(CoordinatorEntity[Tgc1Coordinator], SensorEntity):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        return {"debt_with_payment": _to_float(self._acc.get("debtWithPayment"))}
+        return {
+            "contract_id": self._acc_id,
+            "account_number": self._acc.get("number"),
+            "address": self._acc.get("adress"),
+            "debt_with_payment": _to_float(self._acc.get("debtWithPayment")),
+            "not_approve_payment": _to_float(self._acc.get("notApprovePayment")),
+            "approve_payment": _to_float(self._acc.get("approvePayment")),
+            "exist_recurrent": self._acc.get("existRecurrent"),
+            "status": self._acc.get("status"),
+        }
 
 
 # Базовый класс для сенсоров квитанций, чтобы не дублировать код привязки к устройству
