@@ -8,7 +8,7 @@ DEVICE_URL = f"{BASE_URL}/fl/device"
 SALDO_URL = f"{BASE_URL}/fl/debt/saldo"
 CREATE_READING_URL = f"{BASE_URL}/fl/device/create-reading"
 CREATE_PAYMENT_URL = f"{BASE_URL}/fl/debt/drub-create-pay"
-PAYMENT_STATUS_URL = f"{BASE_URL}/fl/debt/drub-status/{id}"
+PAYMENT_STATUS_URL = f"{BASE_URL}/fl/debt/drub-status/{{id}}"
 
 # Документы (квитанции)
 DOCUMENTS_URL = f"{BASE_URL}/fl/document"
