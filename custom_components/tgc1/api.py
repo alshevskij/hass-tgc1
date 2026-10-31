@@ -12,8 +12,8 @@ from .const import (
     DEVICE_URL,
     DOCUMENTS_URL,
     DOCUMENT_FILE_URL,
-    LOGIN_URL,
     CREATE_PAYMENT_URL,
+    LOGIN_URL,
     PAYMENT_STATUS_URL,
     REQUEST_HEADERS,
     SALDO_URL,
@@ -230,7 +230,11 @@ class Tgc1Client:
         """Create an SBP/Universal QR payment without retrying the POST."""
         from decimal import Decimal, InvalidOperation
 
-        if isinstance(contract_id, bool) or not isinstance(contract_id, int) or contract_id < 1:
+        if (
+            isinstance(contract_id, bool)
+            or not isinstance(contract_id, int)
+            or contract_id < 1
+        ):
             raise Tgc1ApiError("Invalid contract ID")
         try:
             payment_amount = Decimal(str(amount))
@@ -255,7 +259,11 @@ class Tgc1Client:
         payment_id = data.get("id")
         payment_url = data.get("url")
         qr_svg = data.get("img")
-        if isinstance(payment_id, bool) or not isinstance(payment_id, int) or payment_id < 1:
+        if (
+            isinstance(payment_id, bool)
+            or not isinstance(payment_id, int)
+            or payment_id < 1
+        ):
             raise Tgc1ApiError("Payment response has an invalid ID")
         if not isinstance(payment_url, str) or not payment_url.startswith("https://"):
             raise Tgc1ApiError("Payment response has an invalid URL")
@@ -271,7 +279,11 @@ class Tgc1Client:
 
     async def async_check_payment_status(self, payment_id: int) -> bool:
         """Return true when paid and false while payment is not confirmed."""
-        if isinstance(payment_id, bool) or not isinstance(payment_id, int) or payment_id < 1:
+        if (
+            isinstance(payment_id, bool)
+            or not isinstance(payment_id, int)
+            or payment_id < 1
+        ):
             raise Tgc1ApiError("Invalid payment ID")
         data = await self._async_request(
             "POST", PAYMENT_STATUS_URL.format(id=payment_id)
