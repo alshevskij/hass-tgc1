@@ -76,6 +76,7 @@ async def async_setup_entry(
                 for acc_id in new_accounts
                 for entity in (
                     Tgc1CreatePaymentButton(coordinator, acc_id),
+                    Tgc1OpenPaymentButton(coordinator, acc_id),
                     Tgc1CheckPaymentButton(coordinator, acc_id),
                 )
             )
