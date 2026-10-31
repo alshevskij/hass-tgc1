@@ -75,7 +75,7 @@ SUBMIT_READING_SCHEMA = vol.Schema(
 
 CREATE_PAYMENT_SCHEMA = vol.Schema(
     {
-        vol.Required("contract_id"): vol.All(vol.Coerce(int), vol.Range(min=1)),
+        vol.Required("account_number"): vol.All(cv.string, vol.Length(min=1)),
         vol.Required("amount"): vol.All(vol.Coerce(float), vol.Range(min=0.01)),
         vol.Optional("config_entry_id"): cv.string,
     }
@@ -482,27 +482,43 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         return {"path": path}
 
 
-    async def _get_payment_coordinator(call: ServiceCall) -> Tgc1Coordinator:
+    async def _get_payment_account(
+        call: ServiceCall,
+    ) -> tuple[Tgc1Coordinator, int, dict[str, Any]]:
+        """Resolve the user-facing account number to the API contract ID."""
         requested_entry_id = call.data.get("config_entry_id")
-        entries = [
-            entry for entry in hass.config_entries.async_entries(DOMAIN)
-            if entry.state is ConfigEntryState.LOADED
-            and (not requested_entry_id or entry.entry_id == requested_entry_id)
-        ]
-        if not entries:
-            raise ServiceValidationError("Нет загруженной интеграции ТГК-1")
-        if len(entries) > 1:
+        account_number = call.data["account_number"].strip()
+        matches: list[tuple[Tgc1Coordinator, int, dict[str, Any]]] = []
+
+        for entry in hass.config_entries.async_entries(DOMAIN):
+            if entry.state is not ConfigEntryState.LOADED:
+                continue
+            if requested_entry_id and entry.entry_id != requested_entry_id:
+                continue
+            coordinator = entry.runtime_data
+            for contract_id, account in coordinator.data.get("accounts", {}).items():
+                if str(account.get("number", "")).strip() == account_number:
+                    matches.append((coordinator, int(contract_id), account))
+
+        if not matches:
             raise ServiceValidationError(
-                "Найдено несколько подключений ТГК-1. Укажи config_entry_id."
+                "Лицевой счёт не найден среди загруженных данных ТГК-1. "
+                "Проверь номер или обнови интеграцию."
             )
-        return entries[0].runtime_data
+        if len(matches) > 1:
+            raise ServiceValidationError(
+                "Этот номер лицевого счёта найден в нескольких подключениях. "
+                "Укажи config_entry_id."
+            )
+        return matches[0]
 
     async def _handle_create_payment(call: ServiceCall) -> ServiceResponse:
-        coordinator = await _get_payment_coordinator(call)
+        coordinator, contract_id, account = await _get_payment_account(call)
         try:
-            return await coordinator.client.async_create_payment(
-                call.data["contract_id"], call.data["amount"]
+            result = await coordinator.client.async_create_payment(
+                contract_id, call.data["amount"]
             )
+            return {**result, "account_number": account.get("number")}
         except Tgc1RejectedError as err:
             raise ServiceValidationError(f"ЛК отклонил создание платежа: {err}") from err
         except Tgc1AuthError as err:
