@@ -13,6 +13,8 @@ from .const import (
     DOCUMENTS_URL,
     DOCUMENT_FILE_URL,
     LOGIN_URL,
+    CREATE_PAYMENT_URL,
+    PAYMENT_STATUS_URL,
     REQUEST_HEADERS,
     SALDO_URL,
 )
@@ -220,6 +222,63 @@ class Tgc1Client:
             json_body={"counterId": counter_id, "value": value},
             response_format="empty",
         )
+
+
+    async def async_create_payment(
+        self, contract_id: int, amount: float
+    ) -> dict[str, Any]:
+        """Create an SBP/Universal QR payment without retrying the POST."""
+        from decimal import Decimal, InvalidOperation
+
+        if isinstance(contract_id, bool) or not isinstance(contract_id, int) or contract_id < 1:
+            raise Tgc1ApiError("Invalid contract ID")
+        try:
+            payment_amount = Decimal(str(amount))
+        except (InvalidOperation, ValueError, TypeError) as err:
+            raise Tgc1ApiError("Invalid payment amount") from err
+        if not payment_amount.is_finite() or payment_amount <= 0:
+            raise Tgc1ApiError("Payment amount must be greater than zero")
+        if payment_amount.as_tuple().exponent < -2:
+            raise Tgc1ApiError("Payment amount must have no more than 2 decimal places")
+
+        data = await self._async_request(
+            "POST",
+            CREATE_PAYMENT_URL,
+            json_body={
+                "contractId": contract_id,
+                "sm": float(payment_amount),
+                "method": "uqrc",
+            },
+        )
+        if not isinstance(data, dict):
+            raise Tgc1ApiError("Unexpected payment creation response")
+        payment_id = data.get("id")
+        payment_url = data.get("url")
+        qr_svg = data.get("img")
+        if isinstance(payment_id, bool) or not isinstance(payment_id, int) or payment_id < 1:
+            raise Tgc1ApiError("Payment response has an invalid ID")
+        if not isinstance(payment_url, str) or not payment_url.startswith("https://"):
+            raise Tgc1ApiError("Payment response has an invalid URL")
+        if not isinstance(qr_svg, str) or "<svg" not in qr_svg.lower():
+            raise Tgc1ApiError("Payment response has no valid SVG QR code")
+        return {
+            "payment_id": payment_id,
+            "payment_url": payment_url,
+            "qr_svg": qr_svg,
+            "amount": float(payment_amount),
+            "contract_id": contract_id,
+        }
+
+    async def async_check_payment_status(self, payment_id: int) -> bool:
+        """Return true when paid and false while payment is not confirmed."""
+        if isinstance(payment_id, bool) or not isinstance(payment_id, int) or payment_id < 1:
+            raise Tgc1ApiError("Invalid payment ID")
+        data = await self._async_request(
+            "POST", PAYMENT_STATUS_URL.format(id=payment_id)
+        )
+        if not isinstance(data, bool):
+            raise Tgc1ApiError("Unexpected payment status response: expected boolean")
+        return data
 
     async def async_download_document(self, document_id: int) -> bytes:
         """Download a PDF document by its API identifier."""
