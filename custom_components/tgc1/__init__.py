@@ -324,7 +324,6 @@ class Tgc1Coordinator(DataUpdateCoordinator[dict[str, Any]]):
             payment_id = payment.get("payment_id")
             if not isinstance(payment_id, int):
                 raise HomeAssistantError("Сохранённый ID платежа некорректен")
-            was_paid = payment.get("status") == "paid"
             try:
                 paid = await self.client.async_check_payment_status(payment_id)
             except Tgc1RejectedError as err:
