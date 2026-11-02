@@ -250,7 +250,9 @@ class Tgc1Coordinator(DataUpdateCoordinator[dict[str, Any]]):
                 "status": "pending",
             }
             await self._payment_store.async_save(self.payment_data)
-            self.async_set_updated_data(self.data)
+            # Refresh saldo immediately: the API may already include this payment
+            # in debtWithPayment even while the payment is still pending.
+            await self.async_refresh()
             return {**result, "account_number": account.get("number")}
 
     async def async_check_account_payment(self, account_id: int) -> dict[str, Any]:
@@ -278,10 +280,9 @@ class Tgc1Coordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         payment["status"] = "paid" if paid else "pending"
         await self._payment_store.async_save(self.payment_data)
-        if paid:
-            await self.async_refresh()
-        else:
-            self.async_set_updated_data(self.data)
+        # Refresh saldo for both outcomes. A pending payment can already reduce
+        # debtWithPayment before the payment status endpoint confirms settlement.
+        await self.async_refresh()
         return {"payment_id": payment_id, "paid": paid}
 
     async def async_download_document(self, document_id: int, filename: str) -> str:
