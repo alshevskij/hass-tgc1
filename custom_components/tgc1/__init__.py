@@ -129,6 +129,8 @@ class Tgc1Coordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.payment_data: dict[str, dict[str, Any]] = {}
         self.pending_payment_amounts: dict[int, float] = {}
         self._payment_lock = asyncio.Lock()
+        self._payment_check_lock = asyncio.Lock()
+        self._payment_tasks: dict[str, asyncio.Task[None]] = {}
 
     async def _async_update_data(self) -> dict[str, Any]:
         try:
@@ -253,37 +255,111 @@ class Tgc1Coordinator(DataUpdateCoordinator[dict[str, Any]]):
             # Refresh saldo immediately: the API may already include this payment
             # in debtWithPayment even while the payment is still pending.
             await self.async_refresh()
+            self.async_start_payment_polling(account_id)
             return {**result, "account_number": account.get("number")}
 
-    async def async_check_account_payment(self, account_id: int) -> dict[str, Any]:
-        """Check the latest payment associated with an account."""
-        payment = self.payment_data.get(str(account_id))
-        if not payment:
-            raise ServiceValidationError("Для этого лицевого счёта ещё нет платежа")
-        payment_id = payment.get("payment_id")
-        if not isinstance(payment_id, int):
-            raise HomeAssistantError("Сохранённый ID платежа некорректен")
-        try:
-            paid = await self.client.async_check_payment_status(payment_id)
-        except Tgc1RejectedError as err:
-            raise ServiceValidationError(
-                f"ЛК отклонил проверку платежа: {err}"
-            ) from err
-        except Tgc1AuthError as err:
-            raise HomeAssistantError(
-                "Не удалось авторизоваться в личном кабинете ТГК-1"
-            ) from err
-        except Tgc1ApiError as err:
-            raise HomeAssistantError(
-                f"Не удалось проверить статус платежа: {err}"
-            ) from err
+    def async_start_payment_polling(self, account_id: int) -> None:
+        """Start background status checks for the latest payment on an account."""
+        key = str(account_id)
+        payment = self.payment_data.get(key)
+        if not payment or payment.get("status") == "paid":
+            return
+        current = self._payment_tasks.get(key)
+        if current is not None and not current.done():
+            return
+        task = self.hass.async_create_task(
+            self._async_poll_payment(account_id),
+            name=f"tgc1_payment_poll_{self._entry_id}_{account_id}",
+        )
+        self._payment_tasks[key] = task
 
-        payment["status"] = "paid" if paid else "pending"
-        await self._payment_store.async_save(self.payment_data)
-        # Refresh saldo for both outcomes. A pending payment can already reduce
-        # debtWithPayment before the payment status endpoint confirms settlement.
-        await self.async_refresh()
-        return {"payment_id": payment_id, "paid": paid}
+    async def _async_poll_payment(self, account_id: int) -> None:
+        """Poll the payment API until it confirms payment or this entry unloads."""
+        key = str(account_id)
+        try:
+            while True:
+                await asyncio.sleep(30)
+                payment = self.payment_data.get(key)
+                if not payment or payment.get("status") == "paid":
+                    return
+                try:
+                    result = await self.async_check_account_payment(account_id)
+                except (HomeAssistantError, ServiceValidationError):
+                    _LOGGER.warning(
+                        "Не удалось автоматически проверить платёж по счёту %s; "
+                        "повторю проверку позднее",
+                        account_id,
+                        exc_info=True,
+                    )
+                    continue
+                if result["paid"]:
+                    _LOGGER.info(
+                        "Платёж %s по лицевому счёту %s подтверждён",
+                        result["payment_id"],
+                        account_id,
+                    )
+                    return
+        except asyncio.CancelledError:
+            raise
+        finally:
+            task = self._payment_tasks.get(key)
+            if task is asyncio.current_task():
+                self._payment_tasks.pop(key, None)
+
+    async def async_stop_payment_polling(self) -> None:
+        """Cancel background payment checks when the config entry unloads."""
+        tasks = list(self._payment_tasks.values())
+        self._payment_tasks.clear()
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def async_check_account_payment(self, account_id: int) -> dict[str, Any]:
+        """Check the latest payment and notify once when it becomes paid."""
+        async with self._payment_check_lock:
+            payment = self.payment_data.get(str(account_id))
+            if not payment:
+                raise ServiceValidationError("Для этого лицевого счёта ещё нет платежа")
+            payment_id = payment.get("payment_id")
+            if not isinstance(payment_id, int):
+                raise HomeAssistantError("Сохранённый ID платежа некорректен")
+            try:
+                paid = await self.client.async_check_payment_status(payment_id)
+            except Tgc1RejectedError as err:
+                raise ServiceValidationError(
+                    f"ЛК отклонил проверку платежа: {err}"
+                ) from err
+            except Tgc1AuthError as err:
+                raise HomeAssistantError(
+                    "Не удалось авторизоваться в личном кабинете ТГК-1"
+                ) from err
+            except Tgc1ApiError as err:
+                raise HomeAssistantError(
+                    f"Не удалось проверить статус платежа: {err}"
+                ) from err
+
+            payment["status"] = "paid" if paid else "pending"
+            await self._payment_store.async_save(self.payment_data)
+            # Refresh saldo for both outcomes. A pending payment can already reduce
+            # debtWithPayment before the payment status endpoint confirms settlement.
+            await self.async_refresh()
+            if paid and not payment.get("notification_sent"):
+                account = self.data.get("accounts", {}).get(account_id, {})
+                amount = float(payment.get("amount", 0) or 0)
+                account_number = account.get("number") or account_id
+                persistent_notification.async_create(
+                    self.hass,
+                    f"Оплата {amount:.2f} ₽ по лицевому счёту {account_number} "
+                    "подтверждена ТГК-1. Данные задолженности обновлены.",
+                    title="ТГК-1: оплата прошла успешно",
+                    notification_id=(
+                        f"tgc1_payment_paid_{self._entry_id}_{account_id}_{payment_id}"
+                    ),
+                )
+                payment["notification_sent"] = True
+                await self._payment_store.async_save(self.payment_data)
+            return {"payment_id": payment_id, "paid": paid}
 
     async def async_download_document(self, document_id: int, filename: str) -> str:
         """Скачивает PDF квитанции в /media/tgc1/ и возвращает путь."""
@@ -622,32 +698,23 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
     async def _handle_check_payment(call: ServiceCall) -> ServiceResponse:
         coordinator = await _get_payment_coordinator(call)
-        try:
-            paid = await coordinator.client.async_check_payment_status(
-                call.data["payment_id"]
+        account_id = next(
+            (
+                int(account_id)
+                for account_id, payment in coordinator.payment_data.items()
+                if payment.get("payment_id") == call.data["payment_id"]
+            ),
+            None,
+        )
+        if account_id is None:
+            raise ServiceValidationError(
+                "Этот ID платежа не найден среди сохранённых платежей ТГК-1"
             )
-        except Tgc1RejectedError as err:
-            raise ServiceValidationError(f"ЛК отклонил проверку платежа: {err}") from err
-        except Tgc1AuthError as err:
-            raise HomeAssistantError("Не удалось авторизоваться в ЛК ТГК-1") from err
-        except Tgc1ApiError as err:
-            raise HomeAssistantError(f"Не удалось проверить статус платежа: {err}") from err
-
-        for payment in coordinator.payment_data.values():
-            if payment.get("payment_id") == call.data["payment_id"]:
-                payment["status"] = "paid" if paid else "pending"
-                await coordinator._payment_store.async_save(coordinator.payment_data)
-                break
-
-        if paid:
-            await coordinator.async_refresh()
-        else:
-            coordinator.async_set_updated_data(coordinator.data)
+        result = await coordinator.async_check_account_payment(account_id)
         return {
-            "payment_id": call.data["payment_id"],
-            "paid": paid,
-            "status": "paid" if paid else "pending",
-            "balance_refreshed": bool(paid and coordinator.last_update_success),
+            **result,
+            "status": "paid" if result["paid"] else "pending",
+            "balance_refreshed": coordinator.last_update_success,
         }
 
     hass.services.async_register(
@@ -697,8 +764,17 @@ async def async_setup_entry(hass: HomeAssistant, entry: Tgc1ConfigEntry) -> bool
     entry.runtime_data = coordinator
 
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
+    # Resume polling after a restart for payments that were still pending.
+    for account_id, payment in coordinator.payment_data.items():
+        if payment.get("status") != "paid":
+            try:
+                coordinator.async_start_payment_polling(int(account_id))
+            except (TypeError, ValueError):
+                _LOGGER.warning("Некорректный ID счёта в сохранённом платеже: %s", account_id)
     return True
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: Tgc1ConfigEntry) -> bool:
+    coordinator = entry.runtime_data
+    await coordinator.async_stop_payment_polling()
     return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
