@@ -61,6 +61,8 @@ async def async_setup_entry(
             entities.extend(
                 (
                     Tgc1DebtSensor(coordinator, acc_id),
+                    Tgc1DebtWithPaymentSensor(coordinator, acc_id),
+                    Tgc1PendingPaymentSensor(coordinator, acc_id),
                     Tgc1ContractIdSensor(coordinator, acc_id),
                     Tgc1PaymentIdSensor(coordinator, acc_id),
                     Tgc1PaymentStatusSensor(coordinator, acc_id),
@@ -200,6 +202,62 @@ class Tgc1DebtSensor(CoordinatorEntity[Tgc1Coordinator], SensorEntity):
             "exist_recurrent": self._acc.get("existRecurrent"),
             "status": self._acc.get("status"),
         }
+
+
+class Tgc1DebtWithPaymentSensor(CoordinatorEntity[Tgc1Coordinator], SensorEntity):
+    """Debt including payments that are awaiting confirmation."""
+
+    _attr_has_entity_name = True
+    _attr_device_class = SensorDeviceClass.MONETARY
+    _attr_native_unit_of_measurement = "RUB"
+
+    def __init__(self, coordinator: Tgc1Coordinator, acc_id: int) -> None:
+        super().__init__(coordinator)
+        self._acc_id = acc_id
+        self._attr_unique_id = f"{acc_id}_debt_with_payment"
+        self._attr_name = "Задолженность с учётом платежей"
+        account = coordinator.data["accounts"][acc_id]
+        self._attr_device_info = _device_info(acc_id, account.get("number"))
+
+    @property
+    def native_value(self) -> float | None:
+        account = self.coordinator.data.get("accounts", {}).get(self._acc_id, {})
+        return _to_float(account.get("debtWithPayment"))
+
+    @property
+    def available(self) -> bool:
+        return (
+            super().available
+            and self._acc_id in self.coordinator.data.get("accounts", {})
+        )
+
+
+class Tgc1PendingPaymentSensor(CoordinatorEntity[Tgc1Coordinator], SensorEntity):
+    """Payments awaiting confirmation by the utility provider."""
+
+    _attr_has_entity_name = True
+    _attr_device_class = SensorDeviceClass.MONETARY
+    _attr_native_unit_of_measurement = "RUB"
+
+    def __init__(self, coordinator: Tgc1Coordinator, acc_id: int) -> None:
+        super().__init__(coordinator)
+        self._acc_id = acc_id
+        self._attr_unique_id = f"{acc_id}_pending_payment_amount"
+        self._attr_name = "Платежи в обработке"
+        account = coordinator.data["accounts"][acc_id]
+        self._attr_device_info = _device_info(acc_id, account.get("number"))
+
+    @property
+    def native_value(self) -> float | None:
+        account = self.coordinator.data.get("accounts", {}).get(self._acc_id, {})
+        return _to_float(account.get("notApprovePayment"))
+
+    @property
+    def available(self) -> bool:
+        return (
+            super().available
+            and self._acc_id in self.coordinator.data.get("accounts", {})
+        )
 
 
 class Tgc1AccountSensor(CoordinatorEntity[Tgc1Coordinator], SensorEntity):
