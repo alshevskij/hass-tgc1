@@ -117,6 +117,7 @@ class Tgc1Coordinator(DataUpdateCoordinator[dict[str, Any]]):
             update_interval=timedelta(hours=UPDATE_INTERVAL_HOURS),
         )
         self.client = client
+        self._config_entry = entry
         self._entry_id = entry.entry_id
         self._submit_lock = asyncio.Lock()
         # reading typed in the number entity, per meter id
@@ -267,7 +268,8 @@ class Tgc1Coordinator(DataUpdateCoordinator[dict[str, Any]]):
         current = self._payment_tasks.get(key)
         if current is not None and not current.done():
             return
-        task = self.hass.async_create_task(
+        task = self._config_entry.async_create_background_task(
+            self.hass,
             self._async_poll_payment(account_id),
             name=f"tgc1_payment_poll_{self._entry_id}_{account_id}",
         )
