@@ -289,7 +289,18 @@ class Tgc1Client:
             "POST", PAYMENT_STATUS_URL.format(id=payment_id)
         )
         if not isinstance(data, bool):
-            raise Tgc1ApiError("Unexpected payment status response: expected boolean")
+            if isinstance(data, dict):
+                response_shape = f"object with keys: {', '.join(sorted(map(str, data.keys())))}"
+            elif isinstance(data, list):
+                response_shape = f"list with {len(data)} item(s)"
+            elif data is None:
+                response_shape = "null"
+            else:
+                response_shape = type(data).__name__
+            raise Tgc1ApiError(
+                "Unexpected payment status response: expected boolean, "
+                f"got {response_shape}"
+            )
         return data
 
     async def async_download_document(self, document_id: int) -> bytes:
