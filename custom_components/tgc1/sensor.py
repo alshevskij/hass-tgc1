@@ -11,6 +11,7 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
@@ -304,7 +305,7 @@ class Tgc1PaymentIdSensor(Tgc1AccountSensor):
 
     _attr_name = "ID последнего платежа"
     _attr_icon = "mdi:receipt-text-outline"
-    _attr_entity_category = "diagnostic"
+    _attr_entity_category = EntityCategory.DIAGNOSTIC
 
     def __init__(self, coordinator: Tgc1Coordinator, acc_id: int) -> None:
         super().__init__(coordinator, acc_id)
